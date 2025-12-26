@@ -17,6 +17,11 @@ FROM read_ion('test/ion/sample.ion');
 2	three	NULL	NULL	NULL	NULL
 NULL	NULL	false	NULL	NULL	NULL
 
+query I
+SELECT typeof(decimal) FROM read_ion('test/ion/sample.ion') LIMIT 1;
+----
+DOUBLE
+
 query III
 SELECT bigint, varchar, bool
 FROM read_ion('test/ion/sample.ion', columns := {bigint: 'BIGINT', varchar: 'VARCHAR', bool: 'BOOLEAN'});

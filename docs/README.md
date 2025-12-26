@@ -18,6 +18,7 @@ This repository implements a DuckDB extension for reading (and eventually writin
 - You can combine `format` with `records` (e.g., `format := 'array', records := 'false'`). `columns` requires `records=true`.
 - When input structs have different fields, the schema is the union of field names and missing fields are returned as NULL.
 - Type conflicts are promoted across rows (e.g., INT + DOUBLE → DOUBLE, mixed types → VARCHAR, nested fields are merged).
+- Ion DECIMAL values are inferred as DOUBLE unless an explicit `columns` schema is provided.
 
 ## Building
 ### Dependencies

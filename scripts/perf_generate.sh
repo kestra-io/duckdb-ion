@@ -62,4 +62,35 @@ COPY perf_wide TO '$OUT_DIR/data_wide.jsonl' (FORMAT JSON);
 SQL
 
 "$DUCKDB_BIN" < "$SQL_FILE"
+
+os_name="$(uname -s | tr '[:upper:]' '[:lower:]')"
+if [[ "$os_name" == "darwin" ]]; then
+  os_name="osx"
+fi
+triplet="${VCPKG_TARGET_TRIPLET:-$(uname -m)-$os_name}"
+local_prefix="$PWD/vcpkg_installed/$triplet"
+vcpkg_prefix="${VCPKG_ROOT:-}/installed/$triplet"
+if [[ -d "$local_prefix" ]]; then
+  include_dir="$local_prefix/include"
+  lib_dir="$local_prefix/lib"
+elif [[ -d "$vcpkg_prefix" ]]; then
+  include_dir="$vcpkg_prefix/include"
+  lib_dir="$vcpkg_prefix/lib"
+else
+  include_dir=""
+  lib_dir=""
+fi
+
+binary_tool="build/ion_text_to_binary"
+if [[ -n "$include_dir" && -n "$lib_dir" ]]; then
+  if [[ ! -x "$binary_tool" || "scripts/ion_text_to_binary.cpp" -nt "$binary_tool" ]]; then
+    c++ -std=c++17 -O2 -I"$include_dir" "scripts/ion_text_to_binary.cpp" \
+      "$lib_dir/libionc_static.a" "$lib_dir/libdecNumber_static.a" -o "$binary_tool"
+  fi
+  "$binary_tool" "$OUT_DIR/data.ion" "$OUT_DIR/data_binary.ion"
+  "$binary_tool" "$OUT_DIR/data_wide.ion" "$OUT_DIR/data_wide_binary.ion"
+else
+  echo "Skipping binary Ion generation (vcpkg ion-c not found)." >&2
+fi
+
 echo "Wrote datasets to $OUT_DIR"
