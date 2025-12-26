@@ -59,6 +59,7 @@ struct IonReadBindData : public TableFunctionData {
 	RecordsMode records_mode = RecordsMode::AUTO;
 	bool records = true;
 	bool profile = false;
+	bool use_extractor = false;
 };
 
 struct IonStreamState {
@@ -87,6 +88,13 @@ struct IonReadScanState {
 		uint64_t next_nanos = 0;
 		uint64_t value_nanos = 0;
 		uint64_t struct_nanos = 0;
+		uint64_t extractor_matches = 0;
+		uint64_t extractor_attempts = 0;
+		uint64_t extractor_failures = 0;
+		uint64_t extractor_fail_open = 0;
+		uint64_t extractor_fail_path_create = 0;
+		uint64_t extractor_fail_path_append = 0;
+		uint64_t extractor_callbacks = 0;
 		uint64_t rows = 0;
 		uint64_t fields = 0;
 		uint64_t value_calls = 0;
@@ -212,6 +220,7 @@ static void ParseColumnsParameter(ClientContext &context, const Value &value, ve
 static void ParseFormatParameter(const Value &value, IonReadBindData::Format &format);
 static void ParseRecordsParameter(const Value &value, IonReadBindData::RecordsMode &records_mode);
 static void ParseProfileParameter(const Value &value, bool &profile);
+static void ParseUseExtractorParameter(const Value &value, bool &use_extractor);
 
 static unique_ptr<FunctionData> IonReadBind(ClientContext &context, TableFunctionBindInput &input,
                                             vector<LogicalType> &return_types, vector<string> &names) {
@@ -233,6 +242,8 @@ static unique_ptr<FunctionData> IonReadBind(ClientContext &context, TableFunctio
 			ParseRecordsParameter(kv.second, bind_data->records_mode);
 		} else if (option == "profile") {
 			ParseProfileParameter(kv.second, bind_data->profile);
+		} else if (option == "use_extractor") {
+			ParseUseExtractorParameter(kv.second, bind_data->use_extractor);
 		} else {
 			throw BinderException("read_ion does not support named parameter \"%s\"", kv.first);
 		}
@@ -265,7 +276,7 @@ static iERR IonExtractorCallback(hREADER reader, hPATH matched_path, void *user_
 #endif
 
 static void EnsureIonExtractor(IonReadScanState &scan_state, const IonReadBindData &bind_data,
-                               const vector<idx_t> &projected_cols) {
+                               const vector<idx_t> &projected_cols, bool profile) {
 #ifdef DUCKDB_IONC
 	if (scan_state.extractor_ready) {
 		return;
@@ -274,9 +285,15 @@ static void EnsureIonExtractor(IonReadScanState &scan_state, const IonReadBindDa
 		return;
 	}
 	ION_EXTRACTOR_OPTIONS options = {};
+	options.max_path_length = 1;
+	options.max_num_paths = static_cast<ION_EXTRACTOR_SIZE>(projected_cols.size());
 	options.match_relative_paths = true;
 	if (ion_extractor_open(&scan_state.extractor, &options) != IERR_OK) {
 		scan_state.extractor = nullptr;
+		if (profile) {
+			scan_state.timing.extractor_failures++;
+			scan_state.timing.extractor_fail_open++;
+		}
 		return;
 	}
 	scan_state.extractor_cols = projected_cols;
@@ -285,6 +302,10 @@ static void EnsureIonExtractor(IonReadScanState &scan_state, const IonReadBindDa
 		if (ion_extractor_path_create(scan_state.extractor, 1, IonExtractorCallback, &col_idx, &path) != IERR_OK) {
 			ion_extractor_close(scan_state.extractor);
 			scan_state.extractor = nullptr;
+			if (profile) {
+				scan_state.timing.extractor_failures++;
+				scan_state.timing.extractor_fail_path_create++;
+			}
 			return;
 		}
 		ION_STRING field_name;
@@ -293,6 +314,10 @@ static void EnsureIonExtractor(IonReadScanState &scan_state, const IonReadBindDa
 		if (ion_extractor_path_append_field(path, &field_name) != IERR_OK) {
 			ion_extractor_close(scan_state.extractor);
 			scan_state.extractor = nullptr;
+			if (profile) {
+				scan_state.timing.extractor_failures++;
+				scan_state.timing.extractor_fail_path_append++;
+			}
 			return;
 		}
 	}
@@ -400,6 +425,13 @@ static void ReportProfile(IonReadGlobalState &global_state, IonReadScanState &sc
 	global_state.aggregate_timing.next_nanos += scan_state.timing.next_nanos;
 	global_state.aggregate_timing.value_nanos += scan_state.timing.value_nanos;
 	global_state.aggregate_timing.struct_nanos += scan_state.timing.struct_nanos;
+	global_state.aggregate_timing.extractor_matches += scan_state.timing.extractor_matches;
+	global_state.aggregate_timing.extractor_attempts += scan_state.timing.extractor_attempts;
+	global_state.aggregate_timing.extractor_failures += scan_state.timing.extractor_failures;
+	global_state.aggregate_timing.extractor_fail_open += scan_state.timing.extractor_fail_open;
+	global_state.aggregate_timing.extractor_fail_path_create += scan_state.timing.extractor_fail_path_create;
+	global_state.aggregate_timing.extractor_fail_path_append += scan_state.timing.extractor_fail_path_append;
+	global_state.aggregate_timing.extractor_callbacks += scan_state.timing.extractor_callbacks;
 	global_state.aggregate_timing.rows += scan_state.timing.rows;
 	global_state.aggregate_timing.fields += scan_state.timing.fields;
 	global_state.aggregate_timing.value_calls += scan_state.timing.value_calls;
@@ -429,6 +461,13 @@ static void ReportProfile(IonReadGlobalState &global_state, IonReadScanState &sc
 		          << " next_ms=" << to_ms(global_state.aggregate_timing.next_nanos)
 		          << " value_ms=" << to_ms(global_state.aggregate_timing.value_nanos)
 		          << " struct_ms=" << to_ms(global_state.aggregate_timing.struct_nanos)
+		          << " extractor_matches=" << global_state.aggregate_timing.extractor_matches
+		          << " extractor_attempts=" << global_state.aggregate_timing.extractor_attempts
+		          << " extractor_failures=" << global_state.aggregate_timing.extractor_failures
+		          << " extractor_fail_open=" << global_state.aggregate_timing.extractor_fail_open
+		          << " extractor_fail_path_create=" << global_state.aggregate_timing.extractor_fail_path_create
+		          << " extractor_fail_path_append=" << global_state.aggregate_timing.extractor_fail_path_append
+		          << " extractor_callbacks=" << global_state.aggregate_timing.extractor_callbacks
 		          << " projected_columns=" << global_state.projected_columns
 		          << " value_calls=" << global_state.aggregate_timing.value_calls
 		          << " vector_attempts=" << global_state.aggregate_timing.vector_attempts
@@ -538,9 +577,17 @@ static iERR IonExtractorCallback(hREADER reader, hPATH matched_path, void *user_
 	auto &vec = ctx.output->data[out_idx];
 	auto target_type = ctx.bind_data->return_types[col_idx];
 	auto value_start = ctx.profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point {};
-	auto value = IonReadValue(reader, type);
-	if (!value.IsNull()) {
-		ctx.output->SetValue(out_idx, ctx.row, value.DefaultCastAs(target_type));
+	if (!ReadIonValueToVector(reader, type, vec, ctx.row, target_type)) {
+		if (ctx.profile) {
+			ctx.scan_state->timing.vector_fallbacks++;
+		}
+		auto value = IonReadValue(reader, type);
+		if (!value.IsNull()) {
+			ctx.output->SetValue(out_idx, ctx.row, value.DefaultCastAs(target_type));
+		}
+	}
+	if (ctx.profile) {
+		ctx.scan_state->timing.extractor_callbacks++;
 	}
 	if (ctx.profile) {
 		auto elapsed = std::chrono::steady_clock::now() - value_start;
@@ -1232,6 +1279,13 @@ static void ParseProfileParameter(const Value &value, bool &profile) {
 	profile = BooleanValue::Get(value);
 }
 
+static void ParseUseExtractorParameter(const Value &value, bool &use_extractor) {
+	if (value.type().id() != LogicalTypeId::BOOLEAN) {
+		throw BinderException("read_ion \"use_extractor\" parameter must be BOOLEAN.");
+	}
+	use_extractor = BooleanValue::Get(value);
+}
+
 static void InferIonSchema(const string &path, vector<string> &names, vector<LogicalType> &types,
                            IonReadBindData::Format format, IonReadBindData::RecordsMode records_mode,
                            bool &records_out, ClientContext &context) {
@@ -1487,15 +1541,20 @@ static void IonReadFunction(ClientContext &context, TableFunctionInput &data_p, 
 	const bool all_columns = column_ids.empty();
 	const idx_t required_columns = all_columns ? bind_data.return_types.size() : global_state.projected_columns;
 	vector<idx_t> projected_cols;
-	bool use_extractor = bind_data.records && !all_columns && required_columns > 0 && required_columns <= 3;
+	constexpr idx_t ION_EXTRACTOR_MAX_COLUMNS = 16;
+	bool use_extractor = bind_data.use_extractor && bind_data.records && !all_columns && required_columns > 0 &&
+	                     required_columns <= ION_EXTRACTOR_MAX_COLUMNS;
 	if (use_extractor) {
+		if (profile) {
+			scan_state->timing.extractor_attempts++;
+		}
 		projected_cols.reserve(required_columns);
 		for (auto col_id : column_ids) {
 			if (col_id != DConstants::INVALID_INDEX) {
 				projected_cols.push_back(col_id);
 			}
 		}
-		EnsureIonExtractor(*scan_state, bind_data, projected_cols);
+		EnsureIonExtractor(*scan_state, bind_data, projected_cols, profile);
 		if (!scan_state->extractor_ready) {
 			use_extractor = false;
 		}
@@ -1586,10 +1645,10 @@ static void IonReadFunction(ClientContext &context, TableFunctionInput &data_p, 
 				std::fill(scan_state->seen.begin(), scan_state->seen.end(), 0);
 			}
 			auto struct_start = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point {};
-			if (ion_reader_step_in(scan_state->reader) != IERR_OK) {
-				throw IOException("read_ion failed to step into struct");
-			}
 			if (use_extractor && scan_state->extractor_ready) {
+				if (ion_reader_step_in(scan_state->reader) != IERR_OK) {
+					throw IOException("read_ion failed to step into struct");
+				}
 				IonExtractorMatchContext ctx;
 				ctx.scan_state = scan_state;
 				ctx.bind_data = &bind_data;
@@ -1602,7 +1661,13 @@ static void IonReadFunction(ClientContext &context, TableFunctionInput &data_p, 
 				status = ion_extractor_match(scan_state->extractor, scan_state->reader);
 				extractor_context = nullptr;
 				if (status != IERR_OK) {
+					if (profile) {
+						scan_state->timing.extractor_failures++;
+					}
 					throw IOException("read_ion failed during extractor match");
+				}
+				if (profile) {
+					scan_state->timing.extractor_matches++;
 				}
 				if (ion_reader_step_out(scan_state->reader) != IERR_OK) {
 					throw IOException("read_ion failed to step out of struct");
@@ -1615,6 +1680,9 @@ static void IonReadFunction(ClientContext &context, TableFunctionInput &data_p, 
 				}
 				count++;
 				continue;
+			}
+			if (ion_reader_step_in(scan_state->reader) != IERR_OK) {
+				throw IOException("read_ion failed to step into struct");
 			}
 			while (true) {
 				ION_TYPE field_type = tid_NULL;

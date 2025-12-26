@@ -54,6 +54,13 @@ the biggest optimization opportunities likely sit. It focuses on the ingestion p
 - `struct_ms` is consistently the largest bucket, far larger than `value_ms` in text Ion.
 - Binary Ion dramatically reduces `struct_ms`, reinforcing that text traversal/name resolution is the hotspot.
 
+## Ion Extractor Findings (2025-02)
+- A standalone repro in `scripts/ion_extractor_repro.cpp` shows callbacks fire at depth 0 for a struct field path.
+- Callbacks do **not** fire when the reader is stepped into the struct (depth 1), even with
+  `match_relative_paths = true`.
+- `read_ion` steps into structs before reading fields, so extractor matching currently yields NULLs.
+- Extractor usage is disabled by default; it can be forced for experiments via `use_extractor := true`.
+
 ## Next Implementation Sketch
 - **Phase 1: Field lookup fast path**
   - Build a per-scan hash map from field name -> column index (similar to JSON key map) for projections.

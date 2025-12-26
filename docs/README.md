@@ -15,6 +15,7 @@ This repository implements a DuckDB extension for reading (and eventually writin
 - `columns`: struct of `name: 'SQLTYPE'` pairs; skips inference and uses that schema. Nested types are supported (e.g., `STRUCT(name VARCHAR)` or `INTEGER[]`).
 - `format`: `'auto'` (default), `'newline_delimited'`, `'array'`, or `'unstructured'`.
 - `records`: `'auto'` (default), `'true'`, `'false'`, or a BOOLEAN.
+- `use_extractor`: BOOLEAN (default `false`). Experimental projection path using ion-c extractors; currently unreliable for record structs and intended for debugging only.
 - You can combine `format` with `records` (e.g., `format := 'array', records := 'false'`). `columns` requires `records=true`.
 - When input structs have different fields, the schema is the union of field names and missing fields are returned as NULL.
 - Type conflicts are promoted across rows (e.g., INT + DOUBLE → DOUBLE, mixed types → VARCHAR, nested fields are merged).

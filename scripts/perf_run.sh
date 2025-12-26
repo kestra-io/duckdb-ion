@@ -82,6 +82,23 @@ PRAGMA profiling_output='$OUT_DIR/ion_project_min_explicit.json';
 SELECT id
 FROM read_ion(
   '$ION_FILE',
+  records := true,
+  columns := {
+    id: 'BIGINT',
+    category: 'VARCHAR',
+    amount: 'DOUBLE',
+    flag: 'BOOLEAN',
+    ts: 'TIMESTAMP',
+    nested: 'STRUCT(sub_id BIGINT, sub_name VARCHAR)',
+    tags: 'VARCHAR[]'
+  }${ION_PROFILE_ARG}
+);
+
+PRAGMA profiling_output='$OUT_DIR/ion_project_min_extractor.json';
+SELECT id
+FROM read_ion(
+  '$ION_FILE',
+  records := true,
   columns := {
     id: 'BIGINT',
     category: 'VARCHAR',
