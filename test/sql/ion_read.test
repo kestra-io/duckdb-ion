@@ -58,3 +58,18 @@ FROM read_ion('test/ion/array.ion', format := 'array');
 ----
 1	two	true
 2	three	false
+
+query IIII
+SELECT id,
+       nested.name,
+       list_extract(tags, 1),
+       list_extract(nums, 2)
+FROM read_ion('test/ion/nested.ion');
+----
+1	alpha	x	2
+two	beta	z	NULL
+
+query I
+SELECT typeof(id) FROM read_ion('test/ion/nested.ion') LIMIT 1;
+----
+VARCHAR

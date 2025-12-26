@@ -1,0 +1,2 @@
+{id: 1, nested: {name: "alpha", score: 10}, tags: ["x", "y"], nums: [1, 2]}
+{id: "two", nested: {name: "beta"}, tags: ["z"], nums: [3]}

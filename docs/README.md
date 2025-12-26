@@ -7,6 +7,7 @@ This repository implements a DuckDB extension for reading (and eventually writin
 - `read_ion(path, columns := {field: 'TYPE', ...})` uses an explicit schema and skips inference.
 - `read_ion(path, records := 'false')` reads scalar values into a single `ion` column.
 - `read_ion(path, format := 'array')` reads from a top-level Ion list (array) instead of top-level values.
+- Nested Ion structs and lists are supported and map to DuckDB `STRUCT` and `LIST` types.
 - Complex types (list/struct) and richer binary support are planned next.
 
 ## Parameters
@@ -14,6 +15,8 @@ This repository implements a DuckDB extension for reading (and eventually writin
 - `format`: `'auto'` (default), `'newline_delimited'`, `'array'`, or `'unstructured'`.
 - `records`: `'auto'` (default), `'true'`, `'false'`, or a BOOLEAN.
 - You can combine `format` with `records` (e.g., `format := 'array', records := 'false'`). `columns` requires `records=true`.
+- When input structs have different fields, the schema is the union of field names and missing fields are returned as NULL.
+- Type conflicts are promoted across rows (e.g., INT + DOUBLE → DOUBLE, mixed types → VARCHAR, nested fields are merged).
 
 ## Building
 ### Dependencies

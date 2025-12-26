@@ -133,6 +133,8 @@ static unique_ptr<GlobalTableFunctionState> IonReadInit(ClientContext &context, 
 	return std::move(result);
 }
 
+static LogicalType PromoteIonType(const LogicalType &existing, const LogicalType &incoming);
+
 static Value IonReadValue(ION_READER *reader, ION_TYPE type) {
 	BOOL is_null = FALSE;
 	auto status = ion_reader_is_null(reader, &is_null);
@@ -230,6 +232,68 @@ static Value IonReadValue(ION_READER *reader, ION_TYPE type) {
 		string data(reinterpret_cast<const char *>(buffer.data()), read_bytes);
 		return Value::BLOB(data);
 	}
+	case tid_LIST_INT: {
+		if (ion_reader_step_in(reader) != IERR_OK) {
+			throw IOException("read_ion failed to step into list");
+		}
+		vector<Value> values;
+		LogicalType child_type = LogicalType::SQLNULL;
+		while (true) {
+			ION_TYPE elem_type = tid_NULL;
+			auto elem_status = ion_reader_next(reader, &elem_type);
+			if (elem_status == IERR_EOF || elem_type == tid_EOF) {
+				break;
+			}
+			if (elem_status != IERR_OK) {
+				throw IOException("read_ion failed while reading list element");
+			}
+			auto value = IonReadValue(reader, elem_type);
+			values.push_back(value);
+			if (!value.IsNull()) {
+				child_type = PromoteIonType(child_type, value.type());
+			}
+		}
+		if (ion_reader_step_out(reader) != IERR_OK) {
+			throw IOException("read_ion failed to step out of list");
+		}
+		return Value::LIST(child_type, values);
+	}
+	case tid_STRUCT_INT: {
+		if (ion_reader_step_in(reader) != IERR_OK) {
+			throw IOException("read_ion failed to step into struct");
+		}
+		child_list_t<Value> values;
+		unordered_map<string, idx_t> index_by_name;
+		while (true) {
+			ION_TYPE field_type = tid_NULL;
+			auto field_status = ion_reader_next(reader, &field_type);
+			if (field_status == IERR_EOF || field_type == tid_EOF) {
+				break;
+			}
+			if (field_status != IERR_OK) {
+				throw IOException("read_ion failed while reading struct field");
+			}
+			ION_STRING field_name;
+			field_name.value = nullptr;
+			field_name.length = 0;
+			if (ion_reader_get_field_name(reader, &field_name) != IERR_OK) {
+				throw IOException("read_ion failed to read field name");
+			}
+			auto name = string(reinterpret_cast<const char *>(field_name.value), field_name.length);
+			auto value = IonReadValue(reader, field_type);
+			auto it = index_by_name.find(name);
+			if (it == index_by_name.end()) {
+				index_by_name.emplace(name, values.size());
+				values.emplace_back(name, value);
+			} else {
+				values[it->second].second = value;
+			}
+		}
+		if (ion_reader_step_out(reader) != IERR_OK) {
+			throw IOException("read_ion failed to step out of struct");
+		}
+		return Value::STRUCT(values);
+	}
 	default:
 		throw NotImplementedException("read_ion currently supports scalar bool/int/float/decimal/timestamp/string/blob only (type id " +
 		                              std::to_string((int)ION_TYPE_INT(type)) + ")");
@@ -242,6 +306,31 @@ static LogicalType PromoteIonType(const LogicalType &existing, const LogicalType
 	}
 	if (existing == incoming) {
 		return existing;
+	}
+	if (existing.id() == LogicalTypeId::STRUCT && incoming.id() == LogicalTypeId::STRUCT) {
+		child_list_t<LogicalType> merged;
+		unordered_map<string, idx_t> index_by_name;
+		auto &existing_children = StructType::GetChildTypes(existing);
+		for (auto &child : existing_children) {
+			index_by_name.emplace(child.first, merged.size());
+			merged.emplace_back(child.first, child.second);
+		}
+		auto &incoming_children = StructType::GetChildTypes(incoming);
+		for (auto &child : incoming_children) {
+			auto it = index_by_name.find(child.first);
+			if (it == index_by_name.end()) {
+				index_by_name.emplace(child.first, merged.size());
+				merged.emplace_back(child.first, child.second);
+			} else {
+				merged[it->second].second = PromoteIonType(merged[it->second].second, child.second);
+			}
+		}
+		return LogicalType::STRUCT(std::move(merged));
+	}
+	if (existing.id() == LogicalTypeId::LIST && incoming.id() == LogicalTypeId::LIST) {
+		auto &existing_child = ListType::GetChildType(existing);
+		auto &incoming_child = ListType::GetChildType(incoming);
+		return LogicalType::LIST(PromoteIonType(existing_child, incoming_child));
 	}
 	if (existing.id() == LogicalTypeId::VARCHAR || incoming.id() == LogicalTypeId::VARCHAR) {
 		return LogicalType::VARCHAR;
@@ -424,12 +513,6 @@ static void InferIonSchema(const string &path, vector<string> &names, vector<Log
 	};
 
 	auto read_scalar = [&](ION_TYPE type) {
-		if (type == tid_STRUCT || type == tid_LIST || type == tid_SEXP) {
-			ion_reader_close(reader);
-			ion_stream_close(stream);
-			fclose(file);
-			throw NotImplementedException("read_ion records=false currently supports scalar values only");
-		}
 		auto value = IonReadValue(reader, type);
 		if (!value.IsNull()) {
 			if (types.empty()) {
@@ -635,9 +718,6 @@ static void IonReadFunction(ClientContext &context, TableFunctionInput &data_p, 
 				throw IOException("read_ion failed to step out of struct");
 			}
 		} else {
-			if (type == tid_STRUCT || type == tid_LIST || type == tid_SEXP) {
-				throw NotImplementedException("read_ion records=false currently supports scalar values only");
-			}
 			auto value = IonReadValue(state.reader, type);
 			if (!value.IsNull()) {
 				output.SetValue(0, count, value.DefaultCastAs(bind_data.return_types[0]));
