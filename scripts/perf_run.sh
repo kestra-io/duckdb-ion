@@ -21,25 +21,71 @@ PRAGMA enable_profiling='json';
 PRAGMA profiling_output='$OUT_DIR/ion_count.json';
 SELECT COUNT(*) FROM read_ion('$ION_FILE');
 
+PRAGMA profiling_output='$OUT_DIR/ion_count_explicit.json';
+SELECT COUNT(*) FROM read_ion(
+  '$ION_FILE',
+  columns := {
+    id: 'BIGINT',
+    category: 'VARCHAR',
+    amount: 'DOUBLE',
+    flag: 'BOOLEAN',
+    ts: 'TIMESTAMP',
+    nested: 'STRUCT(sub_id BIGINT, sub_name VARCHAR)',
+    tags: 'VARCHAR[]'
+  }
+);
+
 PRAGMA profiling_output='$OUT_DIR/json_count.json';
 SELECT COUNT(*) FROM read_json('$JSON_FILE');
 
 PRAGMA profiling_output='$OUT_DIR/ion_project.json';
-SELECT id, category, amount FROM read_ion('$ION_FILE');
+SELECT id, category, amount::DOUBLE FROM read_ion('$ION_FILE');
+
+PRAGMA profiling_output='$OUT_DIR/ion_project_explicit.json';
+SELECT id, category, amount::DOUBLE
+FROM read_ion(
+  '$ION_FILE',
+  columns := {
+    id: 'BIGINT',
+    category: 'VARCHAR',
+    amount: 'DOUBLE',
+    flag: 'BOOLEAN',
+    ts: 'TIMESTAMP',
+    nested: 'STRUCT(sub_id BIGINT, sub_name VARCHAR)',
+    tags: 'VARCHAR[]'
+  }
+);
 
 PRAGMA profiling_output='$OUT_DIR/json_project.json';
-SELECT id, category, amount FROM read_json('$JSON_FILE');
+SELECT id, category, amount::DOUBLE FROM read_json('$JSON_FILE');
 
 PRAGMA profiling_output='$OUT_DIR/ion_filter_agg.json';
 SELECT category, COUNT(*)
 FROM read_ion('$ION_FILE')
-WHERE amount > 5
+WHERE amount::DOUBLE > 5
+GROUP BY category;
+
+PRAGMA profiling_output='$OUT_DIR/ion_filter_agg_explicit.json';
+SELECT category, COUNT(*)
+FROM read_ion(
+  '$ION_FILE',
+  columns := {
+    id: 'BIGINT',
+    category: 'VARCHAR',
+    amount: 'DOUBLE',
+    flag: 'BOOLEAN',
+    ts: 'TIMESTAMP',
+    nested: 'STRUCT(sub_id BIGINT, sub_name VARCHAR)',
+    tags: 'VARCHAR[]'
+  }
+)
+WHERE amount::DOUBLE > 5
 GROUP BY category;
 
 PRAGMA profiling_output='$OUT_DIR/json_filter_agg.json';
 SELECT category, COUNT(*)
 FROM read_json('$JSON_FILE')
-WHERE amount > 5
+WHERE amount::DOUBLE > 5
 GROUP BY category;
 SQL
 

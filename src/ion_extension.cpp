@@ -13,6 +13,7 @@
 #include "duckdb/function/scalar_function.hpp"
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/main/query_context.hpp"
+#include "duckdb/common/types/vector.hpp"
 #include <duckdb/parser/parsed_data/create_scalar_function_info.hpp>
 #include "duckdb/common/types/decimal.hpp"
 #include "duckdb/common/types/timestamp.hpp"
@@ -22,6 +23,7 @@
 #include <ionc/ion.h>
 #include <ionc/ion_decimal.h>
 #include <ionc/ion_stream.h>
+#include <ionc/ion_symbol_table.h>
 #include <ionc/ion_timestamp.h>
 #endif
 #include <cstdio>
@@ -46,40 +48,50 @@ struct IonReadBindData : public TableFunctionData {
 struct IonReadGlobalState : public GlobalTableFunctionState {
 #ifdef DUCKDB_IONC
 	ION_READER *reader = nullptr;
-	vector<BYTE> buffer;
+	struct IonStreamState {
+		unique_ptr<FileHandle> handle;
+		QueryContext query_context;
+		vector<BYTE> buffer;
+	};
+	IonStreamState stream_state;
+	unordered_map<SID, idx_t> sid_map;
 #endif
 	bool finished = false;
 	bool array_initialized = false;
+	bool reader_initialized = false;
 
 	~IonReadGlobalState() override {
 #ifdef DUCKDB_IONC
 		if (reader) {
 			ion_reader_close(reader);
 		}
+		if (stream_state.handle) {
+			stream_state.handle->Close();
+		}
 #endif
 	}
 };
 
-static void ReadFileToBuffer(ClientContext &context, const string &path, vector<BYTE> &buffer) {
-	auto &fs = FileSystem::GetFileSystem(context);
-	auto handle = fs.OpenFile(path, FileFlags::FILE_FLAGS_READ);
-	auto size = handle->GetFileSize();
-	if (size < 0) {
-		throw IOException("read_ion failed to read file size");
+static iERR IonStreamHandler(ION_STREAM *pstream) {
+	if (!pstream || !pstream->handler_state) {
+		return IERR_EOF;
 	}
-	buffer.resize(static_cast<idx_t>(size));
-	idx_t offset = 0;
-	while (offset < buffer.size()) {
-		auto read = handle->Read(QueryContext(context), buffer.data() + offset, buffer.size() - offset);
-		if (read <= 0) {
-			break;
-		}
-		offset += static_cast<idx_t>(read);
+	auto state = static_cast<IonReadGlobalState::IonStreamState *>(pstream->handler_state);
+	if (!state->handle) {
+		pstream->limit = nullptr;
+		return IERR_EOF;
 	}
-	handle->Close();
-	if (offset != buffer.size()) {
-		buffer.resize(offset);
+	if (state->buffer.empty()) {
+		state->buffer.resize(64 * 1024);
 	}
+	auto read = state->handle->Read(state->query_context, state->buffer.data(), state->buffer.size());
+	if (read <= 0) {
+		pstream->limit = nullptr;
+		return IERR_EOF;
+	}
+	pstream->curr = state->buffer.data();
+	pstream->limit = pstream->curr + read;
+	return IERR_OK;
 }
 
 static void InferIonSchema(const string &path, vector<string> &names, vector<LogicalType> &types,
@@ -135,15 +147,9 @@ static unique_ptr<GlobalTableFunctionState> IonReadInit(ClientContext &context, 
 #ifndef DUCKDB_IONC
 	throw InvalidInputException("read_ion requires ion-c; rebuild with ion-c available");
 #else
-	ReadFileToBuffer(context, bind_data.path, result->buffer);
-	if (result->buffer.empty()) {
-		throw IOException("read_ion failed to read file");
-	}
-	auto status = ion_reader_open_buffer(&result->reader, result->buffer.data(),
-	                                     static_cast<SIZE>(result->buffer.size()), nullptr);
-	if (status != IERR_OK) {
-		throw IOException("read_ion failed to open Ion reader");
-	}
+	auto &fs = FileSystem::GetFileSystem(context);
+	result->stream_state.handle = fs.OpenFile(bind_data.path, FileFlags::FILE_FLAGS_READ);
+	result->stream_state.query_context = QueryContext(context);
 #endif
 	return std::move(result);
 }
@@ -363,6 +369,158 @@ static LogicalType PromoteIonType(const LogicalType &existing, const LogicalType
 	return LogicalType::VARCHAR;
 }
 
+static bool ReadIonValueToVector(ION_READER *reader, ION_TYPE field_type, Vector &vector, idx_t row,
+                                 const LogicalType &target_type) {
+	BOOL is_null = FALSE;
+	if (ion_reader_is_null(reader, &is_null) != IERR_OK) {
+		throw IOException("read_ion failed while checking null status");
+	}
+	if (is_null) {
+		return true;
+	}
+	switch (target_type.id()) {
+	case LogicalTypeId::BOOLEAN: {
+		if (ION_TYPE_INT(field_type) != tid_BOOL_INT) {
+			return false;
+		}
+		BOOL value = FALSE;
+		if (ion_reader_read_bool(reader, &value) != IERR_OK) {
+			throw IOException("read_ion failed to read bool");
+		}
+		auto data = FlatVector::GetData<bool>(vector);
+		data[row] = value != FALSE;
+		return true;
+	}
+	case LogicalTypeId::BIGINT: {
+		if (ION_TYPE_INT(field_type) != tid_INT_INT && ION_TYPE_INT(field_type) != tid_BOOL_INT) {
+			return false;
+		}
+		int64_t value = 0;
+		if (ION_TYPE_INT(field_type) == tid_BOOL_INT) {
+			BOOL bool_value = FALSE;
+			if (ion_reader_read_bool(reader, &bool_value) != IERR_OK) {
+				throw IOException("read_ion failed to read bool");
+			}
+			value = bool_value ? 1 : 0;
+		} else if (ion_reader_read_int64(reader, &value) != IERR_OK) {
+			throw IOException("read_ion failed to read int");
+		}
+		auto data = FlatVector::GetData<int64_t>(vector);
+		data[row] = value;
+		return true;
+	}
+	case LogicalTypeId::DOUBLE: {
+		double value = 0.0;
+		if (ION_TYPE_INT(field_type) == tid_FLOAT_INT) {
+			if (ion_reader_read_double(reader, &value) != IERR_OK) {
+				throw IOException("read_ion failed to read float");
+			}
+		} else if (ION_TYPE_INT(field_type) == tid_INT_INT) {
+			int64_t int_value = 0;
+			if (ion_reader_read_int64(reader, &int_value) != IERR_OK) {
+				throw IOException("read_ion failed to read int");
+			}
+			value = static_cast<double>(int_value);
+		} else {
+			return false;
+		}
+		auto data = FlatVector::GetData<double>(vector);
+		data[row] = value;
+		return true;
+	}
+	case LogicalTypeId::DECIMAL: {
+		if (ION_TYPE_INT(field_type) != tid_DECIMAL_INT) {
+			return false;
+		}
+		ION_DECIMAL decimal;
+		ion_decimal_zero(&decimal);
+		if (ion_reader_read_ion_decimal(reader, &decimal) != IERR_OK) {
+			throw IOException("read_ion failed to read decimal");
+		}
+		vector<char> buffer(ION_DECIMAL_STRLEN(&decimal) + 1);
+		ion_decimal_to_string(&decimal, buffer.data());
+		ion_decimal_free(&decimal);
+		auto decimal_str = string(buffer.data());
+		hugeint_t decimal_value;
+		auto width = DecimalType::GetWidth(target_type);
+		auto scale = DecimalType::GetScale(target_type);
+		CastParameters parameters(false, nullptr);
+		if (!TryCastToDecimal::Operation(string_t(decimal_str), decimal_value, parameters, width, scale)) {
+			return false;
+		}
+		auto data = FlatVector::GetData<hugeint_t>(vector);
+		data[row] = decimal_value;
+		return true;
+	}
+	case LogicalTypeId::TIMESTAMP:
+	case LogicalTypeId::TIMESTAMP_TZ: {
+		if (ION_TYPE_INT(field_type) != tid_TIMESTAMP_INT) {
+			return false;
+		}
+		ION_TIMESTAMP timestamp;
+		if (ion_reader_read_timestamp(reader, &timestamp) != IERR_OK) {
+			throw IOException("read_ion failed to read timestamp");
+		}
+		decContext ctx;
+		decContextDefault(&ctx, DEC_INIT_DECQUAD);
+		char buffer[ION_MAX_TIMESTAMP_STRING + 1];
+		SIZE output_length = 0;
+		if (ion_timestamp_to_string(&timestamp, buffer, sizeof(buffer), &output_length, &ctx) != IERR_OK) {
+			throw IOException("read_ion failed to format timestamp");
+		}
+		if (output_length > ION_MAX_TIMESTAMP_STRING) {
+			output_length = ION_MAX_TIMESTAMP_STRING;
+		}
+		buffer[output_length] = '\0';
+		auto ts_str = string(buffer);
+		auto ts = Timestamp::FromString(ts_str, true);
+		if (target_type.id() == LogicalTypeId::TIMESTAMP_TZ) {
+			auto data = FlatVector::GetData<timestamp_tz_t>(vector);
+			data[row] = timestamp_tz_t(ts);
+		} else {
+			auto data = FlatVector::GetData<timestamp_t>(vector);
+			data[row] = ts;
+		}
+		return true;
+	}
+	case LogicalTypeId::VARCHAR: {
+		if (ION_TYPE_INT(field_type) != tid_STRING_INT && ION_TYPE_INT(field_type) != tid_SYMBOL_INT &&
+		    ION_TYPE_INT(field_type) != tid_CLOB_INT) {
+			return false;
+		}
+		ION_STRING value;
+		value.value = nullptr;
+		value.length = 0;
+		if (ion_reader_read_string(reader, &value) != IERR_OK) {
+			throw IOException("read_ion failed to read string");
+		}
+		auto data = FlatVector::GetData<string_t>(vector);
+		data[row] = StringVector::AddString(vector, reinterpret_cast<const char *>(value.value), value.length);
+		return true;
+	}
+	case LogicalTypeId::BLOB: {
+		if (ION_TYPE_INT(field_type) != tid_BLOB_INT) {
+			return false;
+		}
+		SIZE length = 0;
+		if (ion_reader_get_lob_size(reader, &length) != IERR_OK) {
+			throw IOException("read_ion failed to get blob size");
+		}
+		vector<BYTE> buffer(length);
+		SIZE read_bytes = 0;
+		if (ion_reader_read_lob_bytes(reader, buffer.data(), length, &read_bytes) != IERR_OK) {
+			throw IOException("read_ion failed to read blob");
+		}
+		auto data = FlatVector::GetData<string_t>(vector);
+		data[row] = StringVector::AddStringOrBlob(vector, reinterpret_cast<const char *>(buffer.data()),
+		                                          static_cast<idx_t>(read_bytes));
+		return true;
+	}
+	default:
+		return false;
+	}
+}
+
 static void ParseColumnsParameter(ClientContext &context, const Value &value, vector<string> &names,
                                   vector<LogicalType> &types) {
 	auto &child_type = value.type();
@@ -431,17 +589,17 @@ static void InferIonSchema(const string &path, vector<string> &names, vector<Log
                            IonReadBindData::Format format, IonReadBindData::RecordsMode records_mode,
                            bool &records_out, ClientContext &context) {
 	ION_READER *reader = nullptr;
-	vector<BYTE> buffer;
-	ReadFileToBuffer(context, path, buffer);
-	if (buffer.empty()) {
-		throw IOException("read_ion failed to read file for schema inference");
-	}
-	auto status = ion_reader_open_buffer(&reader, buffer.data(), static_cast<SIZE>(buffer.size()), nullptr);
+	IonReadGlobalState::IonStreamState stream_state;
+	auto &fs = FileSystem::GetFileSystem(context);
+	stream_state.handle = fs.OpenFile(path, FileFlags::FILE_FLAGS_READ);
+	stream_state.query_context = QueryContext(context);
+	auto status = ion_reader_open_stream(&reader, &stream_state, IonStreamHandler, nullptr);
 	if (status != IERR_OK) {
 		throw IOException("read_ion failed to open Ion reader for schema inference");
 	}
 
 	unordered_map<string, idx_t> index_by_name;
+	unordered_map<SID, idx_t> sid_map;
 	const idx_t max_rows = 1000;
 	idx_t rows = 0;
 	bool records_decided = (records_mode != IonReadBindData::RecordsMode::AUTO);
@@ -480,27 +638,53 @@ static void InferIonSchema(const string &path, vector<string> &names, vector<Log
 				ion_reader_close(reader);
 				throw IOException("read_ion failed while reading struct field");
 			}
-			ION_STRING field_name;
-			field_name.value = nullptr;
-			field_name.length = 0;
-			if (ion_reader_get_field_name(reader, &field_name) != IERR_OK) {
+			ION_SYMBOL field_symbol = {};
+			if (ion_reader_get_field_name_symbol(reader, &field_symbol) != IERR_OK) {
 				ion_reader_close(reader);
 				throw IOException("read_ion failed to read field name");
 			}
-			auto name = string(reinterpret_cast<const char *>(field_name.value), field_name.length);
+			idx_t field_idx = 0;
+			bool have_index = false;
+			if (field_symbol.sid > 0) {
+				auto sid_it = sid_map.find(field_symbol.sid);
+				if (sid_it != sid_map.end()) {
+					field_idx = sid_it->second;
+					have_index = true;
+				}
+			}
+			if (!have_index) {
+				string name;
+				if (field_symbol.value && field_symbol.length > 0) {
+					name = string(reinterpret_cast<const char *>(field_symbol.value), field_symbol.length);
+				} else {
+					ION_STRING field_name;
+					field_name.value = nullptr;
+					field_name.length = 0;
+					if (ion_reader_get_field_name(reader, &field_name) != IERR_OK) {
+						ion_reader_close(reader);
+						throw IOException("read_ion failed to read field name");
+					}
+					name = string(reinterpret_cast<const char *>(field_name.value), field_name.length);
+				}
+				auto it = index_by_name.find(name);
+				if (it == index_by_name.end()) {
+					field_idx = types.size();
+					index_by_name.emplace(name, field_idx);
+					names.push_back(name);
+					types.push_back(LogicalType::SQLNULL);
+				} else {
+					field_idx = it->second;
+				}
+				if (field_symbol.sid > 0) {
+					sid_map.emplace(field_symbol.sid, field_idx);
+				}
+			}
 			auto value = IonReadValue(reader, field_type);
 			if (value.IsNull()) {
 				continue;
 			}
-			auto it = index_by_name.find(name);
-			if (it == index_by_name.end()) {
-				index_by_name.emplace(name, types.size());
-				names.push_back(name);
-				types.push_back(value.type());
-			} else {
-				auto &current_type = types[it->second];
-				current_type = PromoteIonType(current_type, value.type());
-			}
+			auto &current_type = types[field_idx];
+			current_type = PromoteIonType(current_type, value.type());
 		}
 		if (ion_reader_step_out(reader) != IERR_OK) {
 			ion_reader_close(reader);
@@ -594,6 +778,9 @@ static void InferIonSchema(const string &path, vector<string> &names, vector<Log
 	}
 
 	ion_reader_close(reader);
+	if (stream_state.handle) {
+		stream_state.handle->Close();
+	}
 
 	if (names.empty()) {
 		throw InvalidInputException("read_ion could not infer schema from input");
@@ -612,6 +799,13 @@ static void IonReadFunction(ClientContext &context, TableFunctionInput &data_p, 
 	throw InvalidInputException("read_ion requires ion-c; rebuild with ion-c available");
 #else
 	auto &bind_data = data_p.bind_data->Cast<IonReadBindData>();
+	if (!state.reader_initialized) {
+		auto status = ion_reader_open_stream(&state.reader, &state.stream_state, IonStreamHandler, nullptr);
+		if (status != IERR_OK) {
+			throw IOException("read_ion failed to open Ion reader");
+		}
+		state.reader_initialized = true;
+	}
 	idx_t count = 0;
 	while (count < STANDARD_VECTOR_SIZE) {
 		ION_TYPE type = tid_NULL;
@@ -681,19 +875,52 @@ static void IonReadFunction(ClientContext &context, TableFunctionInput &data_p, 
 				if (status != IERR_OK) {
 					throw IOException("read_ion failed while reading struct field");
 				}
-				ION_STRING field_name;
-				field_name.value = nullptr;
-				field_name.length = 0;
-				if (ion_reader_get_field_name(state.reader, &field_name) != IERR_OK) {
+				ION_SYMBOL field_symbol = {};
+				if (ion_reader_get_field_name_symbol(state.reader, &field_symbol) != IERR_OK) {
 					throw IOException("read_ion failed to read field name");
 				}
-				auto name = string(reinterpret_cast<const char *>(field_name.value), field_name.length);
-				auto map_it = bind_data.name_map.find(name);
-				auto value = IonReadValue(state.reader, field_type);
-				if (map_it != bind_data.name_map.end() && !value.IsNull()) {
-					auto col_idx = map_it->second;
+				idx_t col_idx = 0;
+				bool have_col = false;
+				if (field_symbol.sid > 0) {
+					auto sid_it = state.sid_map.find(field_symbol.sid);
+					if (sid_it != state.sid_map.end()) {
+						col_idx = sid_it->second;
+						have_col = true;
+					}
+				}
+				if (!have_col) {
+					string name;
+					if (field_symbol.value && field_symbol.length > 0) {
+						name = string(reinterpret_cast<const char *>(field_symbol.value), field_symbol.length);
+					} else {
+						ION_STRING field_name;
+						field_name.value = nullptr;
+						field_name.length = 0;
+						if (ion_reader_get_field_name(state.reader, &field_name) != IERR_OK) {
+							throw IOException("read_ion failed to read field name");
+						}
+						name = string(reinterpret_cast<const char *>(field_name.value), field_name.length);
+					}
+					auto map_it = bind_data.name_map.find(name);
+					if (map_it != bind_data.name_map.end()) {
+						col_idx = map_it->second;
+						have_col = true;
+						if (field_symbol.sid > 0) {
+							state.sid_map.emplace(field_symbol.sid, col_idx);
+						}
+					}
+				}
+				if (have_col) {
+					auto &vec = output.data[col_idx];
 					auto target_type = bind_data.return_types[col_idx];
-					output.SetValue(col_idx, count, value.DefaultCastAs(target_type));
+					if (!ReadIonValueToVector(state.reader, field_type, vec, count, target_type)) {
+						auto value = IonReadValue(state.reader, field_type);
+						if (!value.IsNull()) {
+							output.SetValue(col_idx, count, value.DefaultCastAs(target_type));
+						}
+					}
+				} else {
+					(void)IonReadValue(state.reader, field_type);
 				}
 			}
 			if (ion_reader_step_out(state.reader) != IERR_OK) {
