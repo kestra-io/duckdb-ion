@@ -9,6 +9,8 @@ test/python/__pycache__/
 .Rhistory
 .venv/
 vcpkg_installed/
+.perf/
+perf/
 *.o
 *.obj
 *.a
