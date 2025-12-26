@@ -17,11 +17,17 @@
 #include "duckdb/common/types/vector.hpp"
 #include <duckdb/parser/parsed_data/create_scalar_function_info.hpp>
 #include "duckdb/common/types/decimal.hpp"
+#include "duckdb/common/types/date.hpp"
+#include "duckdb/common/types/interval.hpp"
+#include "duckdb/common/types/hugeint.hpp"
+#include "duckdb/common/types/time.hpp"
 #include "duckdb/common/types/timestamp.hpp"
+#include "duckdb/common/operator/subtract.hpp"
 #include "duckdb/common/unordered_map.hpp"
 #include "duckdb/parallel/task_scheduler.hpp"
 #include "duckdb/common/helper.hpp"
 #include <chrono>
+#include <cstring>
 #include <iostream>
 #include <mutex>
 
@@ -31,6 +37,7 @@
 #include <ionc/ion_stream.h>
 #include <ionc/ion_symbol_table.h>
 #include <ionc/ion_timestamp.h>
+#include <decNumber/decQuad.h>
 #endif
 #include <cstdio>
 
@@ -79,6 +86,8 @@ struct IonReadScanState {
 		uint64_t fields = 0;
 		bool reported = false;
 	} timing;
+	vector<uint32_t> seen;
+	uint32_t row_counter = 0;
 
 	void ResetReader() {
 #ifdef DUCKDB_IONC
@@ -118,6 +127,7 @@ struct IonReadGlobalState : public GlobalTableFunctionState {
 	vector<column_t> column_ids;
 	idx_t inflight_ranges = 0;
 	IonReadScanState::Timing aggregate_timing;
+	idx_t projected_columns = 0;
 
 	idx_t MaxThreads() const override {
 		return max_threads;
@@ -222,6 +232,11 @@ static unique_ptr<GlobalTableFunctionState> IonReadInit(ClientContext &context, 
 	result->scan_state.reader_options.skip_character_validation = TRUE;
 	result->file_size = result->scan_state.stream_state.handle->GetFileSize();
 	result->column_ids = input.column_ids;
+	for (auto col_id : result->column_ids) {
+		if (col_id != DConstants::INVALID_INDEX) {
+			result->projected_columns++;
+		}
+	}
 	result->parallel_enabled = bind_data.format == IonReadBindData::Format::NEWLINE_DELIMITED && bind_data.records &&
 	                           result->scan_state.stream_state.handle->CanSeek();
 	if (result->parallel_enabled) {
@@ -303,7 +318,8 @@ static void ReportProfile(IonReadGlobalState &global_state, IonReadScanState &sc
 		          << " fields=" << global_state.aggregate_timing.fields
 		          << " next_ms=" << to_ms(global_state.aggregate_timing.next_nanos)
 		          << " value_ms=" << to_ms(global_state.aggregate_timing.value_nanos)
-		          << " struct_ms=" << to_ms(global_state.aggregate_timing.struct_nanos) << std::endl;
+		          << " struct_ms=" << to_ms(global_state.aggregate_timing.struct_nanos)
+		          << " projected_columns=" << global_state.projected_columns << std::endl;
 	}
 }
 
@@ -336,6 +352,168 @@ static unique_ptr<LocalTableFunctionState> IonReadInitLocal(ExecutionContext &co
 }
 
 static LogicalType PromoteIonType(const LogicalType &existing, const LogicalType &incoming);
+
+static inline bool IonStringEquals(const ION_STRING &ion_str, const string &value) {
+	if (!ion_str.value) {
+		return false;
+	}
+	if (ion_str.length != value.size()) {
+		return false;
+	}
+	return std::memcmp(ion_str.value, value.data(), ion_str.length) == 0;
+}
+
+static inline void SkipIonValue(ION_READER *reader, ION_TYPE type) {
+	(void)reader;
+	(void)type;
+}
+
+static bool IonDecimalToHugeint(const ION_DECIMAL &decimal, hugeint_t &result, uint8_t width, uint8_t scale) {
+	if (decimal.type != ION_DECIMAL_TYPE_QUAD) {
+		return false;
+	}
+	auto &quad = decimal.value.quad_value;
+	if (!decQuadIsFinite(&quad)) {
+		return false;
+	}
+	uint8_t digits_bcd[DECQUAD_Pmax] = {};
+	int32_t exponent = 0;
+	const int32_t digits = decQuadToBCD(&quad, &exponent, digits_bcd);
+	if (digits < 0) {
+		return false;
+	}
+	const int32_t scale_delta = exponent + static_cast<int32_t>(scale);
+	if (scale_delta < 0) {
+		return false;
+	}
+	if (digits + scale_delta > width) {
+		return false;
+	}
+	hugeint_t value;
+	Hugeint::TryConvert<int32_t>(0, value);
+	for (int32_t i = 0; i < digits; i++) {
+		hugeint_t next;
+		if (!Hugeint::TryMultiply(value, Hugeint::POWERS_OF_TEN[1], next)) {
+			return false;
+		}
+		value = next;
+		hugeint_t digit_value;
+		if (!Hugeint::TryConvert<uint8_t>(digits_bcd[i], digit_value)) {
+			return false;
+		}
+		if (!Hugeint::TryAddInPlace(value, digit_value)) {
+			return false;
+		}
+	}
+	if (scale_delta > 0) {
+		if (scale_delta < Hugeint::CACHED_POWERS_OF_TEN) {
+			if (!Hugeint::TryMultiply(value, Hugeint::POWERS_OF_TEN[scale_delta], value)) {
+				return false;
+			}
+		} else {
+			for (int32_t i = 0; i < scale_delta; i++) {
+				hugeint_t next;
+				if (!Hugeint::TryMultiply(value, Hugeint::POWERS_OF_TEN[1], next)) {
+					return false;
+				}
+				value = next;
+			}
+		}
+	}
+	if (decQuadIsNegative(&quad)) {
+		if (!Hugeint::TryNegate(value, value)) {
+			return false;
+		}
+	}
+	result = value;
+	return true;
+}
+
+static bool IonFractionToMicros(decQuad &fraction, int32_t &micros) {
+	decContext ctx;
+	decContextDefault(&ctx, DEC_INIT_DECQUAD);
+	decQuad scale;
+	decQuadFromUInt32(&scale, 1000000);
+	decQuad scaled;
+	decQuadMultiply(&scaled, &fraction, &scale, &ctx);
+	if (!decQuadIsFinite(&scaled) || decQuadIsNegative(&scaled)) {
+		return false;
+	}
+	micros = decQuadToInt32(&scaled, &ctx, DEC_ROUND_DOWN);
+	return micros >= 0 && micros <= 1000000;
+}
+
+static bool IonTimestampToDuckDB(ION_TIMESTAMP &timestamp, timestamp_t &result) {
+	int precision = 0;
+	if (ion_timestamp_get_precision(&timestamp, &precision) != IERR_OK) {
+		return false;
+	}
+	if (precision < ION_TS_DAY) {
+		return false;
+	}
+	int year = 0;
+	int month = 0;
+	int day = 0;
+	int hour = 0;
+	int minute = 0;
+	int second = 0;
+	decQuad fraction;
+	decQuadZero(&fraction);
+	if (precision >= ION_TS_FRAC) {
+		if (ion_timestamp_get_thru_fraction(&timestamp, &year, &month, &day, &hour, &minute, &second, &fraction) !=
+		    IERR_OK) {
+			return false;
+		}
+	} else if (precision >= ION_TS_SEC) {
+		if (ion_timestamp_get_thru_second(&timestamp, &year, &month, &day, &hour, &minute, &second) != IERR_OK) {
+			return false;
+		}
+	} else if (precision >= ION_TS_MIN) {
+		if (ion_timestamp_get_thru_minute(&timestamp, &year, &month, &day, &hour, &minute) != IERR_OK) {
+			return false;
+		}
+	} else {
+		if (ion_timestamp_get_thru_day(&timestamp, &year, &month, &day) != IERR_OK) {
+			return false;
+		}
+	}
+
+	date_t date;
+	if (!Date::TryFromDate(year, month, day, date)) {
+		return false;
+	}
+
+	int32_t micros = 0;
+	if (precision >= ION_TS_FRAC) {
+		if (!IonFractionToMicros(fraction, micros)) {
+			return false;
+		}
+	}
+	if (!Time::IsValidTime(hour, minute, second, micros)) {
+		return false;
+	}
+
+	auto time = Time::FromTime(hour, minute, second, micros);
+	if (!Timestamp::TryFromDatetime(date, time, result)) {
+		return false;
+	}
+
+	BOOL has_offset = FALSE;
+	if (ion_timestamp_has_local_offset(&timestamp, &has_offset) != IERR_OK) {
+		return false;
+	}
+	if (has_offset) {
+		int offset_minutes = 0;
+		if (ion_timestamp_get_local_offset(&timestamp, &offset_minutes) != IERR_OK) {
+			return false;
+		}
+		const int64_t delta = int64_t(offset_minutes) * Interval::MICROS_PER_MINUTE;
+		if (!TrySubtractOperator::Operation(result.value, delta, result.value)) {
+			return false;
+		}
+	}
+	return true;
+}
 
 static Value IonReadValue(ION_READER *reader, ION_TYPE type) {
 	BOOL is_null = FALSE;
@@ -377,13 +555,17 @@ static Value IonReadValue(ION_READER *reader, ION_TYPE type) {
 		if (ion_reader_read_ion_decimal(reader, &decimal) != IERR_OK) {
 			throw IOException("read_ion failed to read decimal");
 		}
+		hugeint_t decimal_value;
+		auto width = Decimal::MAX_WIDTH_DECIMAL;
+		auto scale = static_cast<uint8_t>(18);
+		if (IonDecimalToHugeint(decimal, decimal_value, width, scale)) {
+			ion_decimal_free(&decimal);
+			return Value::DECIMAL(decimal_value, width, scale);
+		}
 		std::vector<char> buffer(ION_DECIMAL_STRLEN(&decimal) + 1);
 		ion_decimal_to_string(&decimal, buffer.data());
 		ion_decimal_free(&decimal);
 		auto decimal_str = string(buffer.data());
-		hugeint_t decimal_value;
-		auto width = Decimal::MAX_WIDTH_DECIMAL;
-		auto scale = static_cast<uint8_t>(18);
 		CastParameters parameters(false, nullptr);
 		if (TryCastToDecimal::Operation(string_t(decimal_str), decimal_value, parameters, width, scale)) {
 			return Value::DECIMAL(decimal_value, width, scale);
@@ -394,6 +576,10 @@ static Value IonReadValue(ION_READER *reader, ION_TYPE type) {
 		ION_TIMESTAMP timestamp;
 		if (ion_reader_read_timestamp(reader, &timestamp) != IERR_OK) {
 			throw IOException("read_ion failed to read timestamp");
+		}
+		timestamp_t ts;
+		if (IonTimestampToDuckDB(timestamp, ts)) {
+			return Value::TIMESTAMPTZ(timestamp_tz_t(ts));
 		}
 		decContext ctx;
 		decContextDefault(&ctx, DEC_INIT_DECQUAD);
@@ -407,7 +593,7 @@ static Value IonReadValue(ION_READER *reader, ION_TYPE type) {
 		}
 		buffer[output_length] = '\0';
 		auto ts_str = string(buffer);
-		auto ts = Timestamp::FromString(ts_str, true);
+		ts = Timestamp::FromString(ts_str, true);
 		return Value::TIMESTAMPTZ(timestamp_tz_t(ts));
 	}
 	case tid_STRING_INT:
@@ -621,16 +807,20 @@ static bool ReadIonValueToVector(ION_READER *reader, ION_TYPE field_type, Vector
 		if (ion_reader_read_ion_decimal(reader, &decimal) != IERR_OK) {
 			throw IOException("read_ion failed to read decimal");
 		}
-		std::vector<char> buffer(ION_DECIMAL_STRLEN(&decimal) + 1);
-		ion_decimal_to_string(&decimal, buffer.data());
-		ion_decimal_free(&decimal);
-		auto decimal_str = string(buffer.data());
 		hugeint_t decimal_value;
 		auto width = DecimalType::GetWidth(target_type);
 		auto scale = DecimalType::GetScale(target_type);
-		CastParameters parameters(false, nullptr);
-		if (!TryCastToDecimal::Operation(string_t(decimal_str), decimal_value, parameters, width, scale)) {
-			return false;
+		if (!IonDecimalToHugeint(decimal, decimal_value, width, scale)) {
+			std::vector<char> buffer(ION_DECIMAL_STRLEN(&decimal) + 1);
+			ion_decimal_to_string(&decimal, buffer.data());
+			ion_decimal_free(&decimal);
+			auto decimal_str = string(buffer.data());
+			CastParameters parameters(false, nullptr);
+			if (!TryCastToDecimal::Operation(string_t(decimal_str), decimal_value, parameters, width, scale)) {
+				return false;
+			}
+		} else {
+			ion_decimal_free(&decimal);
 		}
 		auto data = FlatVector::GetData<hugeint_t>(vector);
 		data[row] = decimal_value;
@@ -646,19 +836,22 @@ static bool ReadIonValueToVector(ION_READER *reader, ION_TYPE field_type, Vector
 		if (ion_reader_read_timestamp(reader, &timestamp) != IERR_OK) {
 			throw IOException("read_ion failed to read timestamp");
 		}
-		decContext ctx;
-		decContextDefault(&ctx, DEC_INIT_DECQUAD);
-		char buffer[ION_MAX_TIMESTAMP_STRING + 1];
-		SIZE output_length = 0;
-		if (ion_timestamp_to_string(&timestamp, buffer, sizeof(buffer), &output_length, &ctx) != IERR_OK) {
-			throw IOException("read_ion failed to format timestamp");
+		timestamp_t ts;
+		if (!IonTimestampToDuckDB(timestamp, ts)) {
+			decContext ctx;
+			decContextDefault(&ctx, DEC_INIT_DECQUAD);
+			char buffer[ION_MAX_TIMESTAMP_STRING + 1];
+			SIZE output_length = 0;
+			if (ion_timestamp_to_string(&timestamp, buffer, sizeof(buffer), &output_length, &ctx) != IERR_OK) {
+				throw IOException("read_ion failed to format timestamp");
+			}
+			if (output_length > ION_MAX_TIMESTAMP_STRING) {
+				output_length = ION_MAX_TIMESTAMP_STRING;
+			}
+			buffer[output_length] = '\0';
+			auto ts_str = string(buffer);
+			ts = Timestamp::FromString(ts_str, true);
 		}
-		if (output_length > ION_MAX_TIMESTAMP_STRING) {
-			output_length = ION_MAX_TIMESTAMP_STRING;
-		}
-		buffer[output_length] = '\0';
-		auto ts_str = string(buffer);
-		auto ts = Timestamp::FromString(ts_str, true);
 		if (target_type.id() == LogicalTypeId::TIMESTAMP_TZ) {
 			auto data = FlatVector::GetData<timestamp_tz_t>(vector);
 			data[row] = timestamp_tz_t(ts);
@@ -1030,6 +1223,22 @@ static void IonReadFunction(ClientContext &context, TableFunctionInput &data_p, 
 			}
 		}
 	}
+	const bool all_columns = column_ids.empty();
+	const idx_t required_columns = all_columns ? bind_data.return_types.size() : global_state.projected_columns;
+	vector<idx_t> projected_cols;
+	const bool use_fast_projection = !all_columns && required_columns > 0 && required_columns <= 3;
+	if (use_fast_projection) {
+		projected_cols.reserve(required_columns);
+		for (auto col_id : column_ids) {
+			if (col_id != DConstants::INVALID_INDEX) {
+				projected_cols.push_back(col_id);
+			}
+		}
+	}
+	if (!all_columns && required_columns > 0 && scan_state->seen.size() != bind_data.return_types.size()) {
+		scan_state->seen.assign(bind_data.return_types.size(), 0);
+		scan_state->row_counter = 0;
+	}
 	idx_t count = 0;
 	while (count < STANDARD_VECTOR_SIZE) {
 		ION_TYPE type = tid_NULL;
@@ -1098,6 +1307,19 @@ static void IonReadFunction(ClientContext &context, TableFunctionInput &data_p, 
 			if (type != tid_STRUCT) {
 				throw InvalidInputException("read_ion expects records to be structs");
 			}
+			if (!all_columns && required_columns == 0) {
+				count++;
+				if (profile) {
+					scan_state->timing.rows++;
+				}
+				continue;
+			}
+			idx_t remaining = required_columns;
+			scan_state->row_counter++;
+			if (scan_state->row_counter == 0) {
+				scan_state->row_counter = 1;
+				std::fill(scan_state->seen.begin(), scan_state->seen.end(), 0);
+			}
 			auto struct_start = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point {};
 			if (ion_reader_step_in(scan_state->reader) != IERR_OK) {
 				throw IOException("read_ion failed to step into struct");
@@ -1111,20 +1333,58 @@ static void IonReadFunction(ClientContext &context, TableFunctionInput &data_p, 
 				if (status != IERR_OK) {
 					throw IOException("read_ion failed while reading struct field");
 				}
+				if (profile) {
+					scan_state->timing.fields++;
+				}
 				ION_SYMBOL *field_symbol = nullptr;
 				if (ion_reader_get_field_name_symbol(scan_state->reader, &field_symbol) != IERR_OK) {
 					throw IOException("read_ion failed to read field name");
 				}
 				idx_t col_idx = 0;
 				bool have_col = false;
+				bool sid_known_miss = false;
 				if (field_symbol && field_symbol->sid > 0) {
 					auto sid_it = scan_state->sid_map.find(field_symbol->sid);
 					if (sid_it != scan_state->sid_map.end()) {
-						col_idx = sid_it->second;
-						have_col = true;
+						if (sid_it->second == DConstants::INVALID_INDEX) {
+							sid_known_miss = true;
+						} else {
+							col_idx = sid_it->second;
+							have_col = true;
+						}
 					}
 				}
-				if (!have_col) {
+				if (!have_col && !sid_known_miss) {
+					if (use_fast_projection) {
+						bool matched = false;
+						ION_STRING field_value;
+						field_value.value = nullptr;
+						field_value.length = 0;
+						if (field_symbol && field_symbol->value.value && field_symbol->value.length > 0) {
+							field_value = field_symbol->value;
+						} else {
+							if (ion_reader_get_field_name(scan_state->reader, &field_value) != IERR_OK) {
+								throw IOException("read_ion failed to read field name");
+							}
+						}
+						for (auto proj_col : projected_cols) {
+							if (IonStringEquals(field_value, bind_data.names[proj_col])) {
+								col_idx = proj_col;
+								have_col = true;
+								matched = true;
+								break;
+							}
+						}
+						if (field_symbol && field_symbol->sid > 0) {
+							if (matched) {
+								scan_state->sid_map.emplace(field_symbol->sid, col_idx);
+							} else {
+								scan_state->sid_map.emplace(field_symbol->sid, DConstants::INVALID_INDEX);
+							}
+						}
+					}
+				}
+				if (!have_col && !sid_known_miss) {
 					string name;
 					if (field_symbol && field_symbol->value.value && field_symbol->value.length > 0) {
 						name = string(reinterpret_cast<const char *>(field_symbol->value.value), field_symbol->value.length);
@@ -1144,6 +1404,8 @@ static void IonReadFunction(ClientContext &context, TableFunctionInput &data_p, 
 						if (field_symbol && field_symbol->sid > 0) {
 							scan_state->sid_map.emplace(field_symbol->sid, col_idx);
 						}
+					} else if (field_symbol && field_symbol->sid > 0) {
+						scan_state->sid_map.emplace(field_symbol->sid, DConstants::INVALID_INDEX);
 					}
 				}
 				if (have_col) {
@@ -1151,7 +1413,7 @@ static void IonReadFunction(ClientContext &context, TableFunctionInput &data_p, 
 					if (out_idx == DConstants::INVALID_INDEX) {
 						auto value_start =
 						    profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point {};
-						(void)IonReadValue(scan_state->reader, field_type);
+						SkipIonValue(scan_state->reader, field_type);
 						if (profile) {
 							auto elapsed = std::chrono::steady_clock::now() - value_start;
 							scan_state->timing.value_nanos += static_cast<uint64_t>(
@@ -1174,18 +1436,25 @@ static void IonReadFunction(ClientContext &context, TableFunctionInput &data_p, 
 						scan_state->timing.value_nanos += static_cast<uint64_t>(
 						    std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count());
 					}
+					if (!all_columns && remaining > 0) {
+						auto marker = scan_state->row_counter;
+						if (scan_state->seen[col_idx] != marker) {
+							scan_state->seen[col_idx] = marker;
+							remaining--;
+							if (remaining == 0) {
+								break;
+							}
+						}
+					}
 				} else {
 					auto value_start =
 					    profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point {};
-					(void)IonReadValue(scan_state->reader, field_type);
+					SkipIonValue(scan_state->reader, field_type);
 					if (profile) {
 						auto elapsed = std::chrono::steady_clock::now() - value_start;
 						scan_state->timing.value_nanos += static_cast<uint64_t>(
 						    std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count());
 					}
-				}
-				if (profile) {
-					scan_state->timing.fields++;
 				}
 			}
 			if (ion_reader_step_out(scan_state->reader) != IERR_OK) {

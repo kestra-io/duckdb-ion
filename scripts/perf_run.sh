@@ -7,6 +7,8 @@ OUT_DIR="${OUT_DIR:-perf/results}"
 
 ION_FILE="$DATA_DIR/data.ion"
 JSON_FILE="$DATA_DIR/data.jsonl"
+ION_WIDE_FILE="$DATA_DIR/data_wide.ion"
+JSON_WIDE_FILE="$DATA_DIR/data_wide.jsonl"
 
 mkdir -p "$OUT_DIR"
 
@@ -108,6 +110,20 @@ SELECT category, COUNT(*)
 FROM read_json('$JSON_FILE')
 WHERE amount::DOUBLE > 5
 GROUP BY category;
+
+PRAGMA profiling_output='$OUT_DIR/ion_count_wide.json';
+SELECT COUNT(*) FROM read_ion('$ION_WIDE_FILE');
+
+PRAGMA profiling_output='$OUT_DIR/json_count_wide.json';
+SELECT COUNT(*) FROM read_json('$JSON_WIDE_FILE');
+
+PRAGMA profiling_output='$OUT_DIR/ion_project_wide.json';
+SELECT id, w_int_00, w_str_00, w_dec_00
+FROM read_ion('$ION_WIDE_FILE');
+
+PRAGMA profiling_output='$OUT_DIR/json_project_wide.json';
+SELECT id, w_int_00, w_str_00, w_dec_00
+FROM read_json('$JSON_WIDE_FILE');
 
 PRAGMA threads=4;
 

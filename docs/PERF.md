@@ -11,6 +11,7 @@ Establish a repeatable baseline comparing `read_ion` to `read_json` on equivalen
 - Or use the helper script to generate both:
   - `ROWS=100000 OUT_DIR=perf/data ./scripts/perf_generate.sh`
   - Re-run this script whenever serialization rules change.
+  - Wide schema fixtures are also emitted as `data_wide.ion` and `data_wide.jsonl`.
 
 ## Step 2: Run standardized queries
 Pick at least three queries and run each on both formats:
