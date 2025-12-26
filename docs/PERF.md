@@ -58,6 +58,7 @@ Keep a simple table (spreadsheet or markdown) with:
 - notes on hotspots from profiling
 You can run the standard set with:
 - `DATA_DIR=perf/data OUT_DIR=perf/results ./scripts/perf_run.sh`
+- Set `ION_PROFILE=1` to emit a `read_ion` internal timing breakdown to stdout.
 
 ## Current Baseline (2M Rows)
 The latest apples-to-apples comparison (same dataset, same query shape) from `perf/results/` shows Ion is still

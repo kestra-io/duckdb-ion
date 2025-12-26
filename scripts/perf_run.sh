@@ -4,6 +4,7 @@ set -euo pipefail
 DUCKDB_BIN="${DUCKDB_BIN:-./build/release/duckdb}"
 DATA_DIR="${DATA_DIR:-perf/data}"
 OUT_DIR="${OUT_DIR:-perf/results}"
+ION_PROFILE="${ION_PROFILE:-0}"
 
 ION_FILE="$DATA_DIR/data.ion"
 JSON_FILE="$DATA_DIR/data.jsonl"
@@ -14,6 +15,11 @@ ION_WIDE_BINARY_FILE="$DATA_DIR/data_wide_binary.ion"
 
 mkdir -p "$OUT_DIR"
 
+ION_PROFILE_ARG=""
+if [[ "$ION_PROFILE" == "1" ]]; then
+  ION_PROFILE_ARG=", profile := true"
+fi
+
 SQL_FILE="$OUT_DIR/run_perf.sql"
 cat > "$SQL_FILE" <<SQL
 INSTALL json;
@@ -23,10 +29,10 @@ LOAD ion;
 PRAGMA enable_profiling='json';
 
 PRAGMA profiling_output='$OUT_DIR/ion_count.json';
-SELECT COUNT(*) FROM read_ion('$ION_FILE');
+SELECT COUNT(*) FROM read_ion('$ION_FILE'${ION_PROFILE_ARG});
 
 PRAGMA profiling_output='$OUT_DIR/ion_count_binary.json';
-SELECT COUNT(*) FROM read_ion('$ION_BINARY_FILE');
+SELECT COUNT(*) FROM read_ion('$ION_BINARY_FILE'${ION_PROFILE_ARG});
 
 PRAGMA profiling_output='$OUT_DIR/ion_count_explicit.json';
 SELECT COUNT(*) FROM read_ion(
@@ -39,17 +45,17 @@ SELECT COUNT(*) FROM read_ion(
     ts: 'TIMESTAMP',
     nested: 'STRUCT(sub_id BIGINT, sub_name VARCHAR)',
     tags: 'VARCHAR[]'
-  }
+  }${ION_PROFILE_ARG}
 );
 
 PRAGMA profiling_output='$OUT_DIR/json_count.json';
 SELECT COUNT(*) FROM read_json('$JSON_FILE');
 
 PRAGMA profiling_output='$OUT_DIR/ion_project.json';
-SELECT id, category, amount::DOUBLE FROM read_ion('$ION_FILE');
+SELECT id, category, amount::DOUBLE FROM read_ion('$ION_FILE'${ION_PROFILE_ARG});
 
 PRAGMA profiling_output='$OUT_DIR/ion_project_binary.json';
-SELECT id, category, amount::DOUBLE FROM read_ion('$ION_BINARY_FILE');
+SELECT id, category, amount::DOUBLE FROM read_ion('$ION_BINARY_FILE'${ION_PROFILE_ARG});
 
 PRAGMA profiling_output='$OUT_DIR/ion_project_explicit.json';
 SELECT id, category, amount::DOUBLE
@@ -63,14 +69,14 @@ FROM read_ion(
     ts: 'TIMESTAMP',
     nested: 'STRUCT(sub_id BIGINT, sub_name VARCHAR)',
     tags: 'VARCHAR[]'
-  }
+  }${ION_PROFILE_ARG}
 );
 
 PRAGMA profiling_output='$OUT_DIR/json_project.json';
 SELECT id, category, amount::DOUBLE FROM read_json('$JSON_FILE');
 
 PRAGMA profiling_output='$OUT_DIR/ion_project_min.json';
-SELECT id FROM read_ion('$ION_FILE');
+SELECT id FROM read_ion('$ION_FILE'${ION_PROFILE_ARG});
 
 PRAGMA profiling_output='$OUT_DIR/ion_project_min_explicit.json';
 SELECT id
@@ -84,7 +90,7 @@ FROM read_ion(
     ts: 'TIMESTAMP',
     nested: 'STRUCT(sub_id BIGINT, sub_name VARCHAR)',
     tags: 'VARCHAR[]'
-  }
+  }${ION_PROFILE_ARG}
 );
 
 PRAGMA profiling_output='$OUT_DIR/json_project_min.json';
@@ -92,7 +98,7 @@ SELECT id FROM read_json('$JSON_FILE');
 
 PRAGMA profiling_output='$OUT_DIR/ion_filter_agg.json';
 SELECT category, COUNT(*)
-FROM read_ion('$ION_FILE')
+FROM read_ion('$ION_FILE'${ION_PROFILE_ARG})
 WHERE amount::DOUBLE > 5
 GROUP BY category;
 
@@ -108,7 +114,7 @@ FROM read_ion(
     ts: 'TIMESTAMP',
     nested: 'STRUCT(sub_id BIGINT, sub_name VARCHAR)',
     tags: 'VARCHAR[]'
-  }
+  }${ION_PROFILE_ARG}
 )
 WHERE amount::DOUBLE > 5
 GROUP BY category;
@@ -120,21 +126,21 @@ WHERE amount::DOUBLE > 5
 GROUP BY category;
 
 PRAGMA profiling_output='$OUT_DIR/ion_count_wide.json';
-SELECT COUNT(*) FROM read_ion('$ION_WIDE_FILE');
+SELECT COUNT(*) FROM read_ion('$ION_WIDE_FILE'${ION_PROFILE_ARG});
 
 PRAGMA profiling_output='$OUT_DIR/ion_count_wide_binary.json';
-SELECT COUNT(*) FROM read_ion('$ION_WIDE_BINARY_FILE');
+SELECT COUNT(*) FROM read_ion('$ION_WIDE_BINARY_FILE'${ION_PROFILE_ARG});
 
 PRAGMA profiling_output='$OUT_DIR/json_count_wide.json';
 SELECT COUNT(*) FROM read_json('$JSON_WIDE_FILE');
 
 PRAGMA profiling_output='$OUT_DIR/ion_project_wide.json';
 SELECT id, w_int_00, w_str_00, w_dec_00
-FROM read_ion('$ION_WIDE_FILE');
+FROM read_ion('$ION_WIDE_FILE'${ION_PROFILE_ARG});
 
 PRAGMA profiling_output='$OUT_DIR/ion_project_wide_binary.json';
 SELECT id, w_int_00, w_str_00, w_dec_00
-FROM read_ion('$ION_WIDE_BINARY_FILE');
+FROM read_ion('$ION_WIDE_BINARY_FILE'${ION_PROFILE_ARG});
 
 PRAGMA profiling_output='$OUT_DIR/json_project_wide.json';
 SELECT id, w_int_00, w_str_00, w_dec_00
@@ -144,7 +150,7 @@ PRAGMA threads=4;
 
 PRAGMA profiling_output='$OUT_DIR/ion_count_nd_parallel.json';
 SELECT COUNT(*)
-FROM read_ion('$ION_FILE', format := 'newline_delimited');
+FROM read_ion('$ION_FILE', format := 'newline_delimited'${ION_PROFILE_ARG});
 
 PRAGMA profiling_output='$OUT_DIR/json_count_nd_parallel.json';
 SELECT COUNT(*)
@@ -152,7 +158,7 @@ FROM read_json('$JSON_FILE');
 
 PRAGMA profiling_output='$OUT_DIR/ion_project_min_nd_parallel.json';
 SELECT id
-FROM read_ion('$ION_FILE', format := 'newline_delimited');
+FROM read_ion('$ION_FILE', format := 'newline_delimited'${ION_PROFILE_ARG});
 
 PRAGMA profiling_output='$OUT_DIR/json_project_min_nd_parallel.json';
 SELECT id

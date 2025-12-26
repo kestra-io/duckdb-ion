@@ -37,12 +37,33 @@ the biggest optimization opportunities likely sit. It focuses on the ingestion p
   `VARCHAR` as a last resort.
 
 ## Improvement Options
+- **Reduce struct traversal cost:** minimize `step_in/step_out` and per-field overhead; treat this as the primary
+  bottleneck based on profiling.
+- **Batch key mapping:** emulate JSON's per-batch key map (name -> column index) to avoid repeated string lookups.
+- **SID-driven projection:** eagerly map projected column names to SIDs (when available) and skip string compares.
+- **Wider extractor usage:** expand ion-c extractor usage beyond <=3 columns, or mirror its logic for larger
+  projections.
+- **Skip logic:** ensure `SkipIonValue` is efficient so non-projected fields are cheap to ignore.
 - **Vectorized materialization:** avoid per-row `Value` creation; write directly into vectors whenever possible.
-- **Fast field matching:** precompute symbol IDs for projected columns when available to skip string comparisons.
-- **Skip logic:** add a real `SkipIonValue` implementation to avoid traversing unprojected fields.
-- **Decimal/timestamp fast path:** restore a correct binary-to-decimal conversion path to avoid string casts.
-- **Extractor path:** validate and extend the ion-c extractor usage for small projections.
-- **Parallel scans:** enable and tune newline-delimited parallelism in the perf suite for apples-to-apples runs.
+- **Decimal/timestamp fast path:** keep binary-to-decimal conversions in-memory to avoid string casts.
+- **Parallel scans:** tune newline-delimited parallelism and chunk sizes once parsing hot spots are reduced.
+
+## Profiling Findings (ION_PROFILE)
+- Type mix aligns with dataset: `int`, `string`, `decimal` counts match expected rows; value conversion cost is
+  not dominating.
+- `struct_ms` is consistently the largest bucket, far larger than `value_ms` in text Ion.
+- Binary Ion dramatically reduces `struct_ms`, reinforcing that text traversal/name resolution is the hotspot.
+
+## Next Implementation Sketch
+- **Phase 1: Field lookup fast path**
+  - Build a per-scan hash map from field name -> column index (similar to JSON key map) for projections.
+  - Prefer SID lookups; cache name-to-col misses to avoid repeated string work.
+- **Phase 2: Extractor expansion**
+  - Enable ion-c extractor for larger projected column sets (configurable threshold).
+  - Validate extractor correctness for nested structs and missing fields.
+- **Phase 3: Batch transform**
+  - Accumulate per-column arrays of Ion values per batch and materialize in vectorized loops.
+  - Align conversion logic with JSON's `TransformObject` pattern for predictable costs.
 
 ## Recent Insights (Perf)
 - Text Ion is still ~3–4x slower than JSON on CPU with much larger latency deltas; overhead is likely in per-row

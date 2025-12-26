@@ -37,6 +37,24 @@ Deliver a first proof-of-concept DuckDB extension that reads AWS Ion (text and b
 2. Decide how to represent annotations and symbol tables (ignore vs column).
 3. Design a minimal write path (newline-delimited structs first).
 4. Add writer options (pretty printing, timestamp format) when needed.
+5. Performance work: reduce struct traversal overhead and align field lookup with JSON.
+
+## Performance Roadmap
+### Phase 1: Field Lookup Fast Path
+- Build a per-scan hash map of projected field names -> column index, mirroring JSON's key map.
+- Prefer SID lookups when available; cache name-to-col misses to avoid repeated string work.
+- Expand "fast projection" to use the map for any projected count (not just <=3 columns).
+
+### Phase 2: Extractor Expansion
+- Increase ion-c extractor threshold beyond <=3 columns and validate correctness.
+- Add a fallback path when extractor fails to resolve field names or missing fields.
+
+### Phase 3: Batch Transform
+- Accumulate per-column arrays of Ion values per batch and transform in vectorized loops.
+- Align conversion semantics with JSON's `TransformObject` to reduce per-row branching.
+
+### Phase 4: Parallel Tuning
+- Tune newline-delimited parallelism and chunk sizes after traversal cost is reduced.
 
 ## Open Questions
 - Which Ion library provides stable C/C++ APIs and licensing suitable for community extensions?
