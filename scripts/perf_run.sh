@@ -59,6 +59,27 @@ FROM read_ion(
 PRAGMA profiling_output='$OUT_DIR/json_project.json';
 SELECT id, category, amount::DOUBLE FROM read_json('$JSON_FILE');
 
+PRAGMA profiling_output='$OUT_DIR/ion_project_min.json';
+SELECT id FROM read_ion('$ION_FILE');
+
+PRAGMA profiling_output='$OUT_DIR/ion_project_min_explicit.json';
+SELECT id
+FROM read_ion(
+  '$ION_FILE',
+  columns := {
+    id: 'BIGINT',
+    category: 'VARCHAR',
+    amount: 'DOUBLE',
+    flag: 'BOOLEAN',
+    ts: 'TIMESTAMP',
+    nested: 'STRUCT(sub_id BIGINT, sub_name VARCHAR)',
+    tags: 'VARCHAR[]'
+  }
+);
+
+PRAGMA profiling_output='$OUT_DIR/json_project_min.json';
+SELECT id FROM read_json('$JSON_FILE');
+
 PRAGMA profiling_output='$OUT_DIR/ion_filter_agg.json';
 SELECT category, COUNT(*)
 FROM read_ion('$ION_FILE')

@@ -9,6 +9,7 @@
 #include "duckdb/common/operator/decimal_cast_operators.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/types.hpp"
+#include "duckdb/common/constants.hpp"
 #include "duckdb/function/cast/default_casts.hpp"
 #include "duckdb/function/scalar_function.hpp"
 #include "duckdb/function/table_function.hpp"
@@ -806,6 +807,16 @@ static void IonReadFunction(ClientContext &context, TableFunctionInput &data_p, 
 		}
 		state.reader_initialized = true;
 	}
+	vector<idx_t> column_to_output;
+	if (!data_p.column_ids.empty()) {
+		column_to_output.assign(bind_data.return_types.size(), DConstants::INVALID_INDEX);
+		for (idx_t i = 0; i < data_p.column_ids.size(); i++) {
+			auto col_id = data_p.column_ids[i];
+			if (col_id != DConstants::INVALID_INDEX) {
+				column_to_output[col_id] = i;
+			}
+		}
+	}
 	idx_t count = 0;
 	while (count < STANDARD_VECTOR_SIZE) {
 		ION_TYPE type = tid_NULL;
@@ -847,8 +858,13 @@ static void IonReadFunction(ClientContext &context, TableFunctionInput &data_p, 
 				throw IOException("read_ion failed while reading next value");
 			}
 		}
-		for (idx_t col_idx = 0; col_idx < bind_data.return_types.size(); col_idx++) {
-			output.SetValue(col_idx, count, Value(bind_data.return_types[col_idx]));
+		for (idx_t out_idx = 0; out_idx < output.ColumnCount(); out_idx++) {
+			auto col_id = data_p.column_ids.empty() ? out_idx : data_p.column_ids[out_idx];
+			if (col_id == DConstants::INVALID_INDEX) {
+				output.SetValue(out_idx, count, Value());
+			} else {
+				output.SetValue(out_idx, count, Value(bind_data.return_types[col_id]));
+			}
 		}
 		BOOL is_null = FALSE;
 		if (ion_reader_is_null(state.reader, &is_null) != IERR_OK) {
@@ -911,12 +927,17 @@ static void IonReadFunction(ClientContext &context, TableFunctionInput &data_p, 
 					}
 				}
 				if (have_col) {
-					auto &vec = output.data[col_idx];
+					auto out_idx = column_to_output.empty() ? col_idx : column_to_output[col_idx];
+					if (out_idx == DConstants::INVALID_INDEX) {
+						(void)IonReadValue(state.reader, field_type);
+						continue;
+					}
+					auto &vec = output.data[out_idx];
 					auto target_type = bind_data.return_types[col_idx];
 					if (!ReadIonValueToVector(state.reader, field_type, vec, count, target_type)) {
 						auto value = IonReadValue(state.reader, field_type);
 						if (!value.IsNull()) {
-							output.SetValue(col_idx, count, value.DefaultCastAs(target_type));
+							output.SetValue(out_idx, count, value.DefaultCastAs(target_type));
 						}
 					}
 				} else {
@@ -929,7 +950,10 @@ static void IonReadFunction(ClientContext &context, TableFunctionInput &data_p, 
 		} else {
 			auto value = IonReadValue(state.reader, type);
 			if (!value.IsNull()) {
-				output.SetValue(0, count, value.DefaultCastAs(bind_data.return_types[0]));
+				auto out_idx = column_to_output.empty() ? 0 : column_to_output[0];
+				if (out_idx != DConstants::INVALID_INDEX) {
+					output.SetValue(out_idx, count, value.DefaultCastAs(bind_data.return_types[0]));
+				}
 			}
 		}
 		count++;
@@ -944,6 +968,9 @@ static void LoadInternal(ExtensionLoader &loader) {
 	read_ion.named_parameters["columns"] = LogicalType::ANY;
 	read_ion.named_parameters["format"] = LogicalType::VARCHAR;
 	read_ion.named_parameters["records"] = LogicalType::ANY;
+	read_ion.projection_pushdown = true;
+	read_ion.filter_pushdown = false;
+	read_ion.filter_prune = false;
 	loader.RegisterFunction(read_ion);
 	RegisterIonCopyFunction(loader);
 }

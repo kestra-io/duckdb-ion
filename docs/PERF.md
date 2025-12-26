@@ -56,3 +56,11 @@ Keep a simple table (spreadsheet or markdown) with:
 - notes on hotspots from profiling
 You can run the standard set with:
 - `DATA_DIR=perf/data OUT_DIR=perf/results ./scripts/perf_run.sh`
+
+## Potential Improvements
+- Enable projection pushdown to skip parsing unselected columns (mirrors `read_json` behavior).
+- Batch-transform Ion values into vectors to reduce per-row `Value` allocations and casts.
+- Cache field-to-column mappings beyond per-field SID lookup (e.g., stable field order heuristics).
+- Consider `ION_READER_OPTIONS.skip_character_validation` for trusted data.
+- Avoid string round-trips for decimals/timestamps by decoding Ion primitives directly.
+- Parallelize newline-delimited scans to better utilize threads.
