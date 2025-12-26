@@ -1,0 +1,4 @@
+[
+  {bigint: 1, varchar: "two", bool: true},
+  {bigint: 2, varchar: "three", bool: false}
+]

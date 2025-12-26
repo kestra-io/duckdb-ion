@@ -3,8 +3,17 @@
 This repository implements a DuckDB extension for reading (and eventually writing) AWS Ion data. It is based on the DuckDB extension template (`docs/TEMPLATE_README.md`) and is intended for eventual distribution via community extensions.
 
 ## Status
-- `read_ion(path)` is implemented using the Ion C library and currently supports scalar Ion values (null, bool, int, float, string/symbol/clob).
-- Complex types (list/struct) and binary Ion support are planned next.
+- `read_ion(path)` reads newline-delimited Ion structs and maps fields to columns using schema inference.
+- `read_ion(path, columns := {field: 'TYPE', ...})` uses an explicit schema and skips inference.
+- `read_ion(path, records := 'false')` reads scalar values into a single `ion` column.
+- `read_ion(path, format := 'array')` reads from a top-level Ion list (array) instead of top-level values.
+- Complex types (list/struct) and richer binary support are planned next.
+
+## Parameters
+- `columns`: struct of `name: 'SQLTYPE'` pairs; skips inference and uses that schema.
+- `format`: `'auto'` (default), `'newline_delimited'`, `'array'`, or `'unstructured'`.
+- `records`: `'auto'` (default), `'true'`, `'false'`, or a BOOLEAN.
+- You can combine `format` with `records` (e.g., `format := 'array', records := 'false'`). `columns` requires `records=true`.
 
 ## Building
 ### Dependencies
@@ -31,7 +40,12 @@ The repo uses a local vcpkg overlay in `vcpkg_ports/`.
 
 Example:
 ```sql
-SELECT ion FROM read_ion('test/ion/sample.ion');
+SELECT bigint, varchar, bool FROM read_ion('test/ion/sample.ion');
+SELECT bigint, varchar, bool
+FROM read_ion('test/ion/sample.ion', columns := {bigint: 'BIGINT', varchar: 'VARCHAR', bool: 'BOOLEAN'});
+SELECT ion FROM read_ion('test/ion/scalars.ion', records := false);
+SELECT bigint, varchar, bool
+FROM read_ion('test/ion/array.ion', format := 'array');
 ```
 
 ## Tests

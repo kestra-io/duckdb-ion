@@ -4,9 +4,57 @@
 
 require ion
 
+query IIIIII
+SELECT bigint,
+       varchar,
+       bool,
+       decimal,
+       strftime(timestamptz::TIMESTAMP, '%Y-%m-%dT%H:%M:%S.%fZ') AS ts,
+       hex(blob) AS blob
+FROM read_ion('test/ion/sample.ion');
+----
+1	two	true	12.340000000000000000	2020-01-02T03:04:05.678000Z	010203
+2	three	NULL	NULL	NULL	NULL
+NULL	NULL	false	NULL	NULL	NULL
+
+query III
+SELECT bigint, varchar, bool
+FROM read_ion('test/ion/sample.ion', columns := {bigint: 'BIGINT', varchar: 'VARCHAR', bool: 'BOOLEAN'});
+----
+1	two	true
+2	three	NULL
+NULL	NULL	false
+
+statement error
+SELECT * FROM read_ion('test/ion/sample.ion', columns := 'BIGINT');
+----
+Binder Error: read_ion "columns" parameter requires a struct as input.
+
+statement error
+SELECT * FROM read_ion('test/ion/sample.ion', columns := {bigint: NULL});
+----
+Binder Error: read_ion "columns" parameter type specification cannot be NULL.
+
+statement error
+SELECT * FROM read_ion('test/ion/sample.ion', columns := {bigint: 1});
+----
+Binder Error: read_ion "columns" parameter type specification must be VARCHAR.
+
+statement error
+SELECT * FROM read_ion('test/ion/sample.ion', foo := 1);
+----
+Binder Error: Invalid named parameter "foo" for function read_ion
+
 query I
-SELECT ion FROM read_ion('test/ion/sample.ion');
+SELECT ion FROM read_ion('test/ion/scalars.ion', records := 'false');
 ----
 1
-two
-true
+2
+3
+
+query III
+SELECT bigint, varchar, bool
+FROM read_ion('test/ion/array.ion', format := 'array');
+----
+1	two	true
+2	three	false
