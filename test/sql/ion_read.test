@@ -73,3 +73,40 @@ query I
 SELECT typeof(id) FROM read_ion('test/ion/nested.ion') LIMIT 1;
 ----
 VARCHAR
+
+query IIII
+SELECT id,
+       nested.name,
+       list_extract(tags, 1),
+       list_extract(nums, 2)
+FROM read_ion('test/ion/nested.ion',
+              columns := {id: 'VARCHAR',
+                          nested: 'STRUCT(name VARCHAR, score BIGINT)',
+                          tags: 'VARCHAR[]',
+                          nums: 'BIGINT[]'});
+----
+1	alpha	x	2
+two	beta	z	NULL
+
+query II
+SELECT typeof(nested.score),
+       typeof(list_extract(nums, 1))
+FROM read_ion('test/ion/conflicts.ion') LIMIT 1;
+----
+VARCHAR	VARCHAR
+
+query I
+SELECT typeof(list_extract(nums, 1))
+FROM read_ion('test/ion/conflicts.ion') LIMIT 1;
+----
+VARCHAR
+
+query II
+SELECT nested.score,
+       list_extract(nums, 1)
+FROM read_ion('test/ion/conflicts.ion');
+----
+10	1
+high	x
+12.500000000000000000	3
+7	{'k': 1}

@@ -11,7 +11,7 @@ This repository implements a DuckDB extension for reading (and eventually writin
 - Complex types (list/struct) and richer binary support are planned next.
 
 ## Parameters
-- `columns`: struct of `name: 'SQLTYPE'` pairs; skips inference and uses that schema.
+- `columns`: struct of `name: 'SQLTYPE'` pairs; skips inference and uses that schema. Nested types are supported (e.g., `STRUCT(name VARCHAR)` or `INTEGER[]`).
 - `format`: `'auto'` (default), `'newline_delimited'`, `'array'`, or `'unstructured'`.
 - `records`: `'auto'` (default), `'true'`, `'false'`, or a BOOLEAN.
 - You can combine `format` with `records` (e.g., `format := 'array', records := 'false'`). `columns` requires `records=true`.
@@ -47,6 +47,13 @@ SELECT bigint, varchar, bool FROM read_ion('test/ion/sample.ion');
 SELECT bigint, varchar, bool
 FROM read_ion('test/ion/sample.ion', columns := {bigint: 'BIGINT', varchar: 'VARCHAR', bool: 'BOOLEAN'});
 SELECT ion FROM read_ion('test/ion/scalars.ion', records := false);
+SELECT id,
+       nested.name,
+       list_extract(tags, 1)
+FROM read_ion('test/ion/nested.ion',
+              columns := {id: 'VARCHAR',
+                          nested: 'STRUCT(name VARCHAR, score BIGINT)',
+                          tags: 'VARCHAR[]'});
 SELECT bigint, varchar, bool
 FROM read_ion('test/ion/array.ion', format := 'array');
 ```
