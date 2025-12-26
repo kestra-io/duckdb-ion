@@ -8,6 +8,7 @@ This repository implements a DuckDB extension for reading (and eventually writin
 - `read_ion(path, records := 'false')` reads scalar values into a single `ion` column.
 - `read_ion(path, format := 'array')` reads from a top-level Ion list (array) instead of top-level values.
 - Nested Ion structs and lists are supported and map to DuckDB `STRUCT` and `LIST` types.
+- Binary Ion is supported when input starts with the Ion version marker.
 - Complex types (list/struct) and richer binary support are planned next.
 
 ## Parameters
@@ -56,7 +57,22 @@ FROM read_ion('test/ion/nested.ion',
                           tags: 'VARCHAR[]'});
 SELECT bigint, varchar, bool
 FROM read_ion('test/ion/array.ion', format := 'array');
+SELECT name FROM read_ion('test/ion/structs_binary.ion');
+SELECT name FROM read_ion('test/ion/array_binary.ion', format := 'array');
 ```
+
+Binary test fixtures can be regenerated with:
+```sh
+python3 scripts/generate_binary_ion_fixtures.py
+```
+
+## Performance Notes
+Current parsing builds `Value` objects for each Ion value and casts per row. This is functional but not optimized.
+If you want a quick baseline, use a large file and measure a full scan:
+```sql
+SELECT COUNT(*) FROM read_ion('path/to/large.ion');
+```
+Likely hotspots to optimize later: nested list/struct parsing, string conversions, and per‑row casting.
 
 ## Tests
 SQLLogicTests live in `test/sql`:

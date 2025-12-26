@@ -110,3 +110,22 @@ FROM read_ion('test/ion/conflicts.ion');
 high	x
 12.500000000000000000	3
 7	{'k': 1}
+
+query I
+SELECT ion FROM read_ion('test/ion/scalars_binary.ion', records := false);
+----
+1
+2
+3
+
+query I
+SELECT name FROM read_ion('test/ion/structs_binary.ion');
+----
+alpha
+beta
+
+query I
+SELECT name FROM read_ion('test/ion/array_binary.ion', format := 'array');
+----
+alpha
+beta
