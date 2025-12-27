@@ -33,7 +33,8 @@ This repository implements a DuckDB extension for reading (and eventually writin
 
 ## Building
 ### Dependencies
-This extension uses vcpkg for dependencies (ion-c). Ensure `VCPKG_ROOT` points to your vcpkg checkout and that you have built it (`./bootstrap-vcpkg.sh`).
+This extension uses vcpkg for dependencies (ion-c) when available, and falls back to FetchContent if `IonC` is not found.
+Ensure `VCPKG_ROOT` points to your vcpkg checkout and that you have built it (`./bootstrap-vcpkg.sh`).
 
 ```sh
 CCACHE_DISABLE=1 VCPKG_TOOLCHAIN_PATH="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \

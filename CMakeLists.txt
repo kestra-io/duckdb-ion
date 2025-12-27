@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.5)
+cmake_minimum_required(VERSION 3.11)
 
 # Set extension name here
 set(TARGET_NAME ion)
@@ -12,6 +12,29 @@ endif()
 if(IONC_VCPKG_DIR AND EXISTS "${IONC_VCPKG_DIR}/IonCConfig.cmake")
   find_package(IonC CONFIG REQUIRED PATHS "${IONC_VCPKG_DIR}" NO_DEFAULT_PATH)
 else()
+  find_package(IonC CONFIG QUIET)
+endif()
+
+if(NOT IonC_FOUND)
+  include(FetchContent)
+  set(IONC_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+  set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+  FetchContent_Declare(
+    ionc
+    GIT_REPOSITORY https://github.com/amzn/ion-c.git
+    GIT_TAG v1.1.4
+  )
+  FetchContent_MakeAvailable(ionc)
+  if(NOT TARGET IonC::ionc)
+    if(TARGET ionc)
+      add_library(IonC::ionc ALIAS ionc)
+    elseif(TARGET ionc_static)
+      add_library(IonC::ionc ALIAS ionc_static)
+    endif()
+  endif()
+endif()
+
+if(NOT TARGET IonC::ionc)
   find_package(IonC CONFIG REQUIRED)
 endif()
 
