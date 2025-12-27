@@ -45,9 +45,6 @@
 #endif
 #include <cstdio>
 
-// OpenSSL linked through vcpkg
-#include <openssl/opensslv.h>
-
 namespace duckdb {
 
 struct IonReadBindData : public TableFunctionData {
@@ -222,9 +219,9 @@ static iERR IonStreamHandler(struct _ion_user_stream *pstream) {
 }
 
 static void InferIonSchema(const vector<string> &paths, vector<string> &names, vector<LogicalType> &types,
-                           IonReadBindData::Format format, IonReadBindData::RecordsMode records_mode,
-                           idx_t max_depth, double field_appearance_threshold, idx_t map_inference_threshold,
-                           idx_t sample_size, idx_t maximum_sample_files, bool &records_out, ClientContext &context);
+                           IonReadBindData::Format format, IonReadBindData::RecordsMode records_mode, idx_t max_depth,
+                           double field_appearance_threshold, idx_t map_inference_threshold, idx_t sample_size,
+                           idx_t maximum_sample_files, bool &records_out, ClientContext &context);
 static void ParseColumnsParameter(ClientContext &context, const Value &value, vector<string> &names,
                                   vector<LogicalType> &types);
 static void ParseFormatParameter(const Value &value, IonReadBindData::Format &format);
@@ -290,8 +287,8 @@ static unique_ptr<FunctionData> IonReadBind(ClientContext &context, TableFunctio
 		}
 		InferIonSchema(schema_paths, bind_data->names, bind_data->return_types, bind_data->format,
 		               bind_data->records_mode, bind_data->max_depth, bind_data->field_appearance_threshold,
-		               bind_data->map_inference_threshold, bind_data->sample_size,
-		               bind_data->maximum_sample_files, bind_data->records, context);
+		               bind_data->map_inference_threshold, bind_data->sample_size, bind_data->maximum_sample_files,
+		               bind_data->records, context);
 	} else {
 		bind_data->records = true;
 	}
@@ -588,8 +585,8 @@ static LogicalType StructureToTypeObject(const IonStructureNode &node, const Ion
 		auto map_value_type = MergeChildrenTypes(node, options, depth + 1, LogicalTypeId::SQLNULL);
 		double total_similarity = 0;
 		for (const auto &child_type : child_types) {
-			const auto similarity = CalculateTypeSimilarity(map_value_type, child_type.second, options.max_depth,
-			                                                depth + 1);
+			const auto similarity =
+			    CalculateTypeSimilarity(map_value_type, child_type.second, options.max_depth, depth + 1);
 			if (similarity < 0) {
 				total_similarity = similarity;
 				break;
@@ -913,7 +910,9 @@ static void ReportProfile(IonReadGlobalState &global_state, IonReadScanState &sc
 	                  (global_state.next_offset >= global_state.file_size && global_state.inflight_ranges == 0);
 	if (done && !global_state.aggregate_timing.reported) {
 		global_state.aggregate_timing.reported = true;
-		auto to_ms = [](uint64_t nanos) { return static_cast<double>(nanos) / 1000000.0; };
+		auto to_ms = [](uint64_t nanos) {
+			return static_cast<double>(nanos) / 1000000.0;
+		};
 		std::cout << "read_ion aggregate timing: rows=" << global_state.aggregate_timing.rows
 		          << " fields=" << global_state.aggregate_timing.fields
 		          << " next_ms=" << to_ms(global_state.aggregate_timing.next_nanos)
@@ -1376,8 +1375,9 @@ static Value IonReadValue(ION_READER *reader, ION_TYPE type) {
 		return Value::STRUCT(values);
 	}
 	default:
-		throw NotImplementedException("read_ion currently supports scalar bool/int/float/decimal/timestamp/string/blob only (type id " +
-		                              std::to_string((int)ION_TYPE_INT(type)) + ")");
+		throw NotImplementedException(
+		    "read_ion currently supports scalar bool/int/float/decimal/timestamp/string/blob only (type id " +
+		    std::to_string((int)ION_TYPE_INT(type)) + ")");
 	}
 }
 
@@ -1706,14 +1706,15 @@ static void ParseFormatParameter(const Value &value, IonReadBindData::Format &fo
 	} else if (format_str == "unstructured") {
 		format = IonReadBindData::Format::UNSTRUCTURED;
 	} else {
-		throw BinderException("read_ion \"format\" must be one of ['auto', 'newline_delimited', 'array', 'unstructured'].");
+		throw BinderException(
+		    "read_ion \"format\" must be one of ['auto', 'newline_delimited', 'array', 'unstructured'].");
 	}
 }
 
 static void ParseRecordsParameter(const Value &value, IonReadBindData::RecordsMode &records_mode) {
 	if (value.type().id() == LogicalTypeId::BOOLEAN) {
-		records_mode = BooleanValue::Get(value) ? IonReadBindData::RecordsMode::ENABLED
-		                                        : IonReadBindData::RecordsMode::DISABLED;
+		records_mode =
+		    BooleanValue::Get(value) ? IonReadBindData::RecordsMode::ENABLED : IonReadBindData::RecordsMode::DISABLED;
 		return;
 	}
 	if (value.type().id() != LogicalTypeId::VARCHAR) {
@@ -1780,7 +1781,8 @@ static void ParseMaximumSampleFilesParameter(const Value &value, idx_t &maximum_
 	} else if (arg > 0) {
 		maximum_sample_files = arg;
 	} else {
-		throw BinderException("read_ion \"maximum_sample_files\" parameter must be positive, or -1 to remove the limit.");
+		throw BinderException(
+		    "read_ion \"maximum_sample_files\" parameter must be positive, or -1 to remove the limit.");
 	}
 }
 
@@ -1834,9 +1836,9 @@ static vector<string> ParseIonPaths(ClientContext &context, const Value &value) 
 }
 
 static void InferIonSchema(const vector<string> &paths, vector<string> &names, vector<LogicalType> &types,
-                           IonReadBindData::Format format, IonReadBindData::RecordsMode records_mode,
-                           idx_t max_depth, double field_appearance_threshold, idx_t map_inference_threshold,
-                           idx_t sample_size, idx_t maximum_sample_files, bool &records_out, ClientContext &context) {
+                           IonReadBindData::Format format, IonReadBindData::RecordsMode records_mode, idx_t max_depth,
+                           double field_appearance_threshold, idx_t map_inference_threshold, idx_t sample_size,
+                           idx_t maximum_sample_files, bool &records_out, ClientContext &context) {
 	ION_READER *reader = nullptr;
 	IonStreamState stream_state;
 	auto &fs = FileSystem::GetFileSystem(context);
@@ -1903,7 +1905,8 @@ static void InferIonSchema(const vector<string> &paths, vector<string> &names, v
 			if (!have_index) {
 				string name;
 				if (field_symbol && field_symbol->value.value && field_symbol->value.length > 0) {
-					name = string(reinterpret_cast<const char *>(field_symbol->value.value), field_symbol->value.length);
+					name =
+					    string(reinterpret_cast<const char *>(field_symbol->value.value), field_symbol->value.length);
 				} else {
 					ION_STRING field_name;
 					field_name.value = nullptr;
@@ -2059,8 +2062,7 @@ static void InferIonSchema(const vector<string> &paths, vector<string> &names, v
 
 static void IonReadFunction(ClientContext &context, TableFunctionInput &data_p, DataChunk &output) {
 	auto &global_state = data_p.global_state->Cast<IonReadGlobalState>();
-	IonReadLocalState *local_state =
-	    data_p.local_state ? &data_p.local_state->Cast<IonReadLocalState>() : nullptr;
+	IonReadLocalState *local_state = data_p.local_state ? &data_p.local_state->Cast<IonReadLocalState>() : nullptr;
 	IonReadScanState *scan_state = local_state ? &local_state->scan_state : &global_state.scan_state;
 	if (scan_state->finished) {
 		if (local_state && global_state.parallel_enabled && InitializeIonRange(global_state, *local_state)) {
@@ -2086,9 +2088,8 @@ static void IonReadFunction(ClientContext &context, TableFunctionInput &data_p, 
 		}
 		scan_state->file_index++;
 		OpenIonFile(*scan_state, bind_data.paths[scan_state->file_index], context);
-		auto status =
-		    ion_reader_open_stream(&scan_state->reader, &scan_state->stream_state, IonStreamHandler,
-		                           &scan_state->reader_options);
+		auto status = ion_reader_open_stream(&scan_state->reader, &scan_state->stream_state, IonStreamHandler,
+		                                     &scan_state->reader_options);
 		if (status != IERR_OK) {
 			throw IOException("read_ion failed to open Ion reader");
 		}
@@ -2099,9 +2100,8 @@ static void IonReadFunction(ClientContext &context, TableFunctionInput &data_p, 
 		return true;
 	};
 	if (!scan_state->reader_initialized) {
-		auto status =
-		    ion_reader_open_stream(&scan_state->reader, &scan_state->stream_state, IonStreamHandler,
-		                           &scan_state->reader_options);
+		auto status = ion_reader_open_stream(&scan_state->reader, &scan_state->stream_state, IonStreamHandler,
+		                                     &scan_state->reader_options);
 		if (status != IERR_OK) {
 			throw IOException("read_ion failed to open Ion reader");
 		}
@@ -2273,8 +2273,8 @@ static void IonReadFunction(ClientContext &context, TableFunctionInput &data_p, 
 				}
 				if (profile) {
 					auto elapsed = std::chrono::steady_clock::now() - struct_start;
-					scan_state->timing.struct_nanos += static_cast<uint64_t>(
-					    std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count());
+					scan_state->timing.struct_nanos +=
+					    static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count());
 					scan_state->timing.rows++;
 				}
 				count++;

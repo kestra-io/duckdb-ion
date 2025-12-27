@@ -19,9 +19,9 @@ static void ThrowIonCopyParameterException(const string &loption) {
 
 static BoundStatement CopyToIonPlan(Binder &binder, CopyStatement &stmt) {
 	static const unordered_set<string> SUPPORTED_BASE_OPTIONS {
-	    "compression", "encoding", "use_tmp_file", "overwrite_or_ignore", "overwrite", "append", "filename_pattern",
-	    "file_extension", "per_thread_output", "file_size_bytes",
-	    "return_files", "preserve_order", "return_stats", "write_partition_columns", "write_empty_file",
+	    "compression",      "encoding",         "use_tmp_file",   "overwrite_or_ignore",     "overwrite",
+	    "append",           "filename_pattern", "file_extension", "per_thread_output",       "file_size_bytes",
+	    "return_files",     "preserve_order",   "return_stats",   "write_partition_columns", "write_empty_file",
 	    "hive_file_pattern"};
 
 	auto stmt_copy = stmt.Copy();

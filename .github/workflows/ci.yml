@@ -1,0 +1,105 @@
+name: CI
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.head_ref || '' }}-${{ github.base_ref || '' }}-${{ github.ref != 'refs/heads/main' && github.sha || '' }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: Linux
+    runs-on: ubuntu-latest
+    env:
+      VCPKG_TOOLCHAIN_PATH: ${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
+      VCPKG_TARGET_TRIPLET: x64-linux
+      GEN: ninja
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: 'true'
+
+      - name: Install Ninja
+        run: sudo apt-get update -y -qq && sudo apt-get install -y -qq ninja-build
+
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11.1
+        with:
+          vcpkgGitCommitId: ce613c41372b23b1f51333815feb3edd87ef8a8b
+
+      - name: Build
+        run: |
+          CCACHE_DISABLE=1 make
+
+      - name: Test
+        run: |
+          make test
+
+      - name: Format Check
+        run: |
+          python3 -m venv .venv
+          . .venv/bin/activate
+          python -m pip install "black>=24" clang_format==11.0.1 cmake-format
+          PATH="${{ github.workspace }}/.venv/bin:$PATH" make format-check
+
+      - name: Tidy Check
+        run: |
+          . .venv/bin/activate
+          python -m pip install clang-tidy
+          PATH="${{ github.workspace }}/.venv/bin:$PATH" \
+            CCACHE_DISABLE=1 \
+            VCPKG_TOOLCHAIN_PATH="${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake" \
+            VCPKG_TARGET_TRIPLET="x64-linux" \
+            make tidy-check
+
+  macos:
+    name: MacOS
+    runs-on: macos-latest
+    env:
+      VCPKG_TOOLCHAIN_PATH: ${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
+      GEN: ninja
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: 'true'
+
+      - name: Install Ninja
+        run: brew install ninja
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11.1
+        with:
+          vcpkgGitCommitId: ce613c41372b23b1f51333815feb3edd87ef8a8b
+
+      - name: Build
+        run: |
+          VCPKG_TARGET_TRIPLET="$(uname -m)-osx" CCACHE_DISABLE=1 make
+
+      - name: Test
+        run: |
+          make test
+
+      - name: Format Check
+        run: |
+          python3 -m venv .venv
+          . .venv/bin/activate
+          python -m pip install "black>=24" clang_format==11.0.1 cmake-format
+          PATH="${{ github.workspace }}/.venv/bin:$PATH" make format-check
+
+      - name: Tidy Check
+        run: |
+          . .venv/bin/activate
+          python -m pip install clang-tidy
+          PATH="${{ github.workspace }}/.venv/bin:$PATH" \
+            CCACHE_DISABLE=1 \
+            VCPKG_TOOLCHAIN_PATH="${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake" \
+            VCPKG_TARGET_TRIPLET="$(uname -m)-osx" \
+            make tidy-check
