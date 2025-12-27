@@ -113,10 +113,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: macos-13
+          - runner: macos-15-intel
             arch: x64
             vcpkg_triplet: x64-osx
-          - runner: macos-14
+          - runner: macos-latest
             arch: arm64
             vcpkg_triplet: arm64-osx
     env:
