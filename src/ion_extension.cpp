@@ -1009,68 +1009,6 @@ static inline void SkipIonValue(ION_READER *reader, ION_TYPE type) {
 		return;
 	}
 	switch (ION_TYPE_INT(type)) {
-	case tid_BOOL_INT: {
-		BOOL value = FALSE;
-		if (ion_reader_read_bool(reader, &value) != IERR_OK) {
-			throw IOException("read_ion failed to skip bool");
-		}
-		return;
-	}
-	case tid_INT_INT: {
-		int64_t value = 0;
-		if (ion_reader_read_int64(reader, &value) != IERR_OK) {
-			throw IOException("read_ion failed to skip int");
-		}
-		return;
-	}
-	case tid_FLOAT_INT: {
-		double value = 0.0;
-		if (ion_reader_read_double(reader, &value) != IERR_OK) {
-			throw IOException("read_ion failed to skip float");
-		}
-		return;
-	}
-	case tid_DECIMAL_INT: {
-		ION_DECIMAL decimal;
-		ion_decimal_zero(&decimal);
-		if (ion_reader_read_ion_decimal(reader, &decimal) != IERR_OK) {
-			throw IOException("read_ion failed to skip decimal");
-		}
-		ion_decimal_free(&decimal);
-		return;
-	}
-	case tid_TIMESTAMP_INT: {
-		ION_TIMESTAMP timestamp;
-		if (ion_reader_read_timestamp(reader, &timestamp) != IERR_OK) {
-			throw IOException("read_ion failed to skip timestamp");
-		}
-		return;
-	}
-	case tid_STRING_INT:
-	case tid_SYMBOL_INT:
-	case tid_CLOB_INT: {
-		ION_STRING value;
-		value.value = nullptr;
-		value.length = 0;
-		if (ion_reader_read_string(reader, &value) != IERR_OK) {
-			throw IOException("read_ion failed to skip string");
-		}
-		return;
-	}
-	case tid_BLOB_INT: {
-		SIZE length = 0;
-		if (ion_reader_get_lob_size(reader, &length) != IERR_OK) {
-			throw IOException("read_ion failed to get blob size while skipping");
-		}
-		if (length > 0) {
-			std::vector<BYTE> buffer(length);
-			SIZE read_bytes = 0;
-			if (ion_reader_read_lob_bytes(reader, buffer.data(), length, &read_bytes) != IERR_OK) {
-				throw IOException("read_ion failed to skip blob");
-			}
-		}
-		return;
-	}
 	case tid_LIST_INT:
 	case tid_SEXP_INT:
 	case tid_STRUCT_INT: {
@@ -1086,7 +1024,10 @@ static inline void SkipIonValue(ION_READER *reader, ION_TYPE type) {
 			if (status != IERR_OK) {
 				throw IOException("read_ion failed while skipping container value");
 			}
-			SkipIonValue(reader, child_type);
+			if (ION_TYPE_INT(child_type) == tid_LIST_INT || ION_TYPE_INT(child_type) == tid_SEXP_INT ||
+			    ION_TYPE_INT(child_type) == tid_STRUCT_INT) {
+				SkipIonValue(reader, child_type);
+			}
 		}
 		if (ion_reader_step_out(reader) != IERR_OK) {
 			throw IOException("read_ion failed to step out of container while skipping");

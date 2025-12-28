@@ -26,6 +26,7 @@ This repository implements a DuckDB extension for reading and writing AWS Ion da
 - `maximum_sample_files`: cap on files sampled during schema inference; `-1` removes the cap.
 - `union_by_name`: when reading multiple files, infer the schema from all files instead of the first file only.
 - `conflict_mode`: `'varchar'` (default) or `'json'` to map conflicting fields to JSON (auto-loads json when available).
+- `use_extractor`: BOOLEAN (default false) to use the ion-c extractor for projected columns when possible.
 - You can combine `format` with `records` (e.g., `format := 'array', records := 'false'`). `columns` requires `records=true`.
 - When input structs have different fields, the schema is the union of field names and missing fields are returned as NULL.
 - Type conflicts are promoted across rows (e.g., INT + DOUBLE → DOUBLE, mixed types → VARCHAR, nested fields are merged).
