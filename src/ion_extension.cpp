@@ -1136,6 +1136,9 @@ static bool IonDecimalToHugeint(const ION_DECIMAL &decimal, hugeint_t &result, u
 }
 
 static void AppendJsonEscapedString(const char *data, idx_t length, string &out) {
+	if (!data) {
+		length = 0;
+	}
 	out.push_back('"');
 	for (idx_t i = 0; i < length; i++) {
 		auto c = static_cast<unsigned char>(data[i]);
@@ -1264,7 +1267,9 @@ static void AppendIonValueAsJson(ION_READER *reader, ION_TYPE type, string &out)
 		if (ion_reader_read_string(reader, &value) != IERR_OK) {
 			throw IOException("read_ion failed to read string");
 		}
-		AppendJsonEscapedString(reinterpret_cast<const char *>(value.value), value.length, out);
+		auto ptr = reinterpret_cast<const char *>(value.value);
+		auto len = static_cast<idx_t>(value.length);
+		AppendJsonEscapedString(ptr, len, out);
 		return;
 	}
 	case tid_BLOB_INT: {
@@ -1334,6 +1339,9 @@ static void AppendIonValueAsJson(ION_READER *reader, ION_TYPE type, string &out)
 				field_name = field_symbol->value;
 			} else if (ion_reader_get_field_name(reader, &field_name) != IERR_OK) {
 				throw IOException("read_ion failed to read field name");
+			}
+			if (!field_name.value) {
+				field_name.length = 0;
 			}
 			if (!first) {
 				out += ", ";
@@ -1949,7 +1957,13 @@ static bool ReadIonValueToVector(ION_READER *reader, ION_TYPE field_type, Vector
 			throw IOException("read_ion failed to read string");
 		}
 		auto data = FlatVector::GetData<string_t>(vector);
-		data[row] = StringVector::AddString(vector, reinterpret_cast<const char *>(value.value), value.length);
+		auto ptr = reinterpret_cast<const char *>(value.value);
+		auto len = static_cast<idx_t>(value.length);
+		if (!ptr) {
+			ptr = "";
+			len = 0;
+		}
+		data[row] = StringVector::AddString(vector, ptr, len);
 		FlatVector::Validity(vector).SetValid(row);
 		if (ion_timing_context) {
 			IncrementIonTimingForType(field_type);
