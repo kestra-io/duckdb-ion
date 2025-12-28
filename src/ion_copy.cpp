@@ -201,7 +201,8 @@ static iERR IonWriteStreamHandler(struct _ion_user_stream *pstream) {
 		state->buffer.resize(64 * 1024);
 	}
 	auto buffer_start = state->buffer.data();
-	if (pstream->curr && pstream->curr > buffer_start) {
+	auto buffer_end = buffer_start + state->buffer.size();
+	if (pstream->curr && pstream->curr >= buffer_start && pstream->curr <= buffer_end) {
 		auto pending = static_cast<idx_t>(pstream->curr - buffer_start);
 		auto buffer_ptr = buffer_start;
 		while (pending > 0) {
