@@ -269,8 +269,13 @@ def summarize_pairs(title, pairs):
     summary_lines.append("Query | Ion CPU | JSON CPU | CPU Ratio | Ion Lat | JSON Lat | Lat Ratio")
     summary_lines.append("--- | --- | --- | --- | --- | --- | ---")
     for label, ion_file, json_file in pairs:
-        ion = load(os.path.join(out_dir, ion_file))
-        js = load(os.path.join(out_dir, json_file))
+        ion_path = os.path.join(out_dir, ion_file)
+        json_path = os.path.join(out_dir, json_file)
+        if not os.path.exists(ion_path) or not os.path.exists(json_path):
+            print(f"Skipping {label} (missing {ion_file} or {json_file})")
+            continue
+        ion = load(ion_path)
+        js = load(json_path)
         jsonl_rows.append({
             "run_ts": run_ts,
             "git_sha": git_sha,
@@ -302,8 +307,13 @@ def summarize_binary(title, pairs):
     summary_lines.append("Query | Text CPU | Binary CPU | Speedup | Text Lat | Binary Lat | Speedup")
     summary_lines.append("--- | --- | --- | --- | --- | --- | ---")
     for label, text_file, bin_file in pairs:
-        text = load(os.path.join(out_dir, text_file))
-        binary = load(os.path.join(out_dir, bin_file))
+        text_path = os.path.join(out_dir, text_file)
+        bin_path = os.path.join(out_dir, bin_file)
+        if not os.path.exists(text_path) or not os.path.exists(bin_path):
+            print(f"Skipping {label} (missing {text_file} or {bin_file})")
+            continue
+        text = load(text_path)
+        binary = load(bin_path)
         jsonl_rows.append({
             "run_ts": run_ts,
             "git_sha": git_sha,
