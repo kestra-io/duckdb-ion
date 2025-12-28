@@ -180,6 +180,7 @@ struct IonWriteStreamState {
 
 struct IonBinaryCopyGlobalState final : public GlobalFunctionData {
 	IonWriteStreamState stream_state;
+	ION_STREAM *stream = nullptr;
 	hWRITER writer = nullptr;
 	bool array = false;
 	bool array_open = false;
@@ -536,7 +537,11 @@ static unique_ptr<GlobalFunctionData> IonBinaryCopyInitializeGlobal(ClientContex
 	decContextDefault(&result->decimal_context, DEC_INIT_DECQUAD);
 	result->decimal_context.digits = 38;
 	options.decimal_context = &result->decimal_context;
-	auto status = ion_writer_open_stream(&result->writer, IonWriteStreamHandler, &result->stream_state, &options);
+	auto status = ion_stream_open_handler_out(IonWriteStreamHandler, &result->stream_state, &result->stream);
+	if (status != IERR_OK) {
+		ThrowIonWriterException(result->stream_state, "write_ion failed to open Ion output stream", status);
+	}
+	status = ion_writer_open(&result->writer, result->stream, &options);
 	if (status != IERR_OK) {
 		ThrowIonWriterException(result->stream_state, "write_ion failed to open Ion writer", status);
 	}
@@ -609,6 +614,13 @@ static void IonBinaryCopyFinalize(ClientContext &context, FunctionData &bind_dat
 			ThrowIonWriterException(state.stream_state, "write_ion failed to close Ion writer", status);
 		}
 		state.writer = nullptr;
+	}
+	if (state.stream) {
+		auto status = ion_stream_close(state.stream);
+		if (status != IERR_OK) {
+			ThrowIonWriterException(state.stream_state, "write_ion failed to close Ion stream", status);
+		}
+		state.stream = nullptr;
 	}
 	if (state.stream_state.handle) {
 		state.stream_state.handle->Close();
