@@ -17,7 +17,7 @@ This repository implements a DuckDB extension for reading and writing AWS Ion da
 ## Parameters
 `read_ion` accepts a single file path, a glob (e.g., `test/ion/*.ion`), or a list of paths.
 - `columns`: struct of `name: 'SQLTYPE'` pairs; skips inference and uses that schema. Nested types are supported (e.g., `STRUCT(name VARCHAR)` or `INTEGER[]`).
-- `format`: `'auto'` (default), `'newline_delimited'`, `'array'`, or `'unstructured'`.
+- `format`: `'auto'` (default), `'newline_delimited'`, or `'array'`.
 - `records`: `'auto'` (default), `'true'`, `'false'`, or a BOOLEAN.
 - `maximum_depth`: maximum nested depth to infer; `-1` means unlimited.
 - `field_appearance_threshold`: when inferring structs, if average field appearance falls below this threshold, infer `MAP` instead of `STRUCT`.
@@ -79,7 +79,7 @@ FROM read_ion('test/ion/conflicts.ion', conflict_mode := 'json');
 ```
 
 ## Writing Ion
-Use `COPY ... TO` with `FORMAT ION` to export newline‑delimited Ion structs:
+`COPY ... TO` with `FORMAT ION` writes Ion text (newline‑delimited structs). Binary Ion output is not supported yet.
 ```sql
 COPY (SELECT 1 AS a, 'x' AS b) TO 'out.ion' (FORMAT ION);
 ```
@@ -88,7 +88,7 @@ To wrap output in a single Ion list:
 COPY (SELECT 1 AS a UNION ALL SELECT 2 AS a) TO 'out.ion' (FORMAT ION, ARRAY TRUE);
 ```
 
-### DuckDB Type Mapping (Write)
+### DuckDB Type Mapping (Write, Text Only)
 `to_ion` and `COPY ... FORMAT ION` use the following mappings:
 
 | DuckDB type | Ion type | Notes |
