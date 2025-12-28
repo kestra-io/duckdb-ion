@@ -18,9 +18,39 @@ ION_WIDE_BINARY_FILE="$DATA_DIR/data_wide_binary.ion"
 
 mkdir -p "$OUT_DIR"
 
+HAS_ION_BINARY=1
+if [[ ! -f "$ION_BINARY_FILE" ]]; then
+  echo "perf_run: skipping binary read benchmarks (missing $ION_BINARY_FILE)" >&2
+  HAS_ION_BINARY=0
+fi
+
+HAS_ION_WIDE_BINARY=1
+if [[ ! -f "$ION_WIDE_BINARY_FILE" ]]; then
+  echo "perf_run: skipping wide binary read benchmarks (missing $ION_WIDE_BINARY_FILE)" >&2
+  HAS_ION_WIDE_BINARY=0
+fi
+
 ION_PROFILE_ARG=""
 if [[ "$ION_PROFILE" == "1" ]]; then
   ION_PROFILE_ARG=", profile := true"
+fi
+
+ION_COUNT_BINARY_SQL=""
+ION_PROJECT_BINARY_SQL=""
+ION_COUNT_WIDE_BINARY_SQL=""
+ION_PROJECT_WIDE_BINARY_SQL=""
+if [[ "$HAS_ION_BINARY" == "1" ]]; then
+  ION_COUNT_BINARY_SQL="PRAGMA profiling_output='$OUT_DIR/ion_count_binary.json';
+SELECT COUNT(*) FROM read_ion('$ION_BINARY_FILE'${ION_PROFILE_ARG});"
+  ION_PROJECT_BINARY_SQL="PRAGMA profiling_output='$OUT_DIR/ion_project_binary.json';
+SELECT id, category, amount::DOUBLE FROM read_ion('$ION_BINARY_FILE'${ION_PROFILE_ARG});"
+fi
+if [[ "$HAS_ION_WIDE_BINARY" == "1" ]]; then
+  ION_COUNT_WIDE_BINARY_SQL="PRAGMA profiling_output='$OUT_DIR/ion_count_wide_binary.json';
+SELECT COUNT(*) FROM read_ion('$ION_WIDE_BINARY_FILE'${ION_PROFILE_ARG});"
+  ION_PROJECT_WIDE_BINARY_SQL="PRAGMA profiling_output='$OUT_DIR/ion_project_wide_binary.json';
+SELECT id, w_int_00, w_str_00, w_dec_00
+FROM read_ion('$ION_WIDE_BINARY_FILE'${ION_PROFILE_ARG});"
 fi
 
 SQL_FILE="$OUT_DIR/run_perf.sql"
@@ -39,8 +69,7 @@ SELECT * FROM read_ion('$ION_WIDE_FILE');
 PRAGMA profiling_output='$OUT_DIR/ion_count.json';
 SELECT COUNT(*) FROM read_ion('$ION_FILE'${ION_PROFILE_ARG});
 
-PRAGMA profiling_output='$OUT_DIR/ion_count_binary.json';
-SELECT COUNT(*) FROM read_ion('$ION_BINARY_FILE'${ION_PROFILE_ARG});
+${ION_COUNT_BINARY_SQL}
 
 PRAGMA profiling_output='$OUT_DIR/ion_count_explicit.json';
 SELECT COUNT(*) FROM read_ion(
@@ -62,8 +91,7 @@ SELECT COUNT(*) FROM read_json('$JSON_FILE');
 PRAGMA profiling_output='$OUT_DIR/ion_project.json';
 SELECT id, category, amount::DOUBLE FROM read_ion('$ION_FILE'${ION_PROFILE_ARG});
 
-PRAGMA profiling_output='$OUT_DIR/ion_project_binary.json';
-SELECT id, category, amount::DOUBLE FROM read_ion('$ION_BINARY_FILE'${ION_PROFILE_ARG});
+${ION_PROJECT_BINARY_SQL}
 
 PRAGMA profiling_output='$OUT_DIR/ion_project_explicit.json';
 SELECT id, category, amount::DOUBLE
@@ -153,8 +181,7 @@ GROUP BY category;
 PRAGMA profiling_output='$OUT_DIR/ion_count_wide.json';
 SELECT COUNT(*) FROM read_ion('$ION_WIDE_FILE'${ION_PROFILE_ARG});
 
-PRAGMA profiling_output='$OUT_DIR/ion_count_wide_binary.json';
-SELECT COUNT(*) FROM read_ion('$ION_WIDE_BINARY_FILE'${ION_PROFILE_ARG});
+${ION_COUNT_WIDE_BINARY_SQL}
 
 PRAGMA profiling_output='$OUT_DIR/json_count_wide.json';
 SELECT COUNT(*) FROM read_json('$JSON_WIDE_FILE');
@@ -163,9 +190,7 @@ PRAGMA profiling_output='$OUT_DIR/ion_project_wide.json';
 SELECT id, w_int_00, w_str_00, w_dec_00
 FROM read_ion('$ION_WIDE_FILE'${ION_PROFILE_ARG});
 
-PRAGMA profiling_output='$OUT_DIR/ion_project_wide_binary.json';
-SELECT id, w_int_00, w_str_00, w_dec_00
-FROM read_ion('$ION_WIDE_BINARY_FILE'${ION_PROFILE_ARG});
+${ION_PROJECT_WIDE_BINARY_SQL}
 
 PRAGMA profiling_output='$OUT_DIR/json_project_wide.json';
 SELECT id, w_int_00, w_str_00, w_dec_00
