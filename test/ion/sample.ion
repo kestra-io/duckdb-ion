@@ -1,3 +1,3 @@
-{bigint: 1, varchar: "two", bool: true, decimal: 12.34, timestamptz: 2020-01-02T03:04:05.678Z, blob: {{AQID}}}
+{bigint: 1, varchar: "two", bool: true, decimal: 12.34d0, timestamptz: 2020-01-02T03:04:05.678Z, blob: {{AQID}}}
 {bigint: 2, varchar: "three"}
 {bool: false}

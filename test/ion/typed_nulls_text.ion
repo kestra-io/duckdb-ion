@@ -1,0 +1,2 @@
+{a: null.int, b: null.string, c: null.decimal, d: null.timestamp, e: null.bool}
+{a: 1, b: "x", c: 12.34d0, d: 2020-01-01T00:00:00Z, e: true}

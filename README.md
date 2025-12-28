@@ -25,68 +25,38 @@ This repository implements a DuckDB extension for reading and writing AWS Ion da
 - `sample_size`: number of values to sample for schema inference; `-1` means sample all input.
 - `maximum_sample_files`: cap on files sampled during schema inference; `-1` removes the cap.
 - `union_by_name`: when reading multiple files, infer the schema from all files instead of the first file only.
-- `use_extractor`: BOOLEAN (default `false`). Experimental projection path using ion-c extractors; currently unreliable for record structs and intended for debugging only.
+- `conflict_mode`: `'varchar'` (default) or `'json'` to map conflicting fields to JSON (auto-loads json when available).
 - You can combine `format` with `records` (e.g., `format := 'array', records := 'false'`). `columns` requires `records=true`.
 - When input structs have different fields, the schema is the union of field names and missing fields are returned as NULL.
 - Type conflicts are promoted across rows (e.g., INT + DOUBLE → DOUBLE, mixed types → VARCHAR, nested fields are merged).
-- Ion DECIMAL values are inferred as DOUBLE unless an explicit `columns` schema is provided.
-- `use_extractor` note: ion-c extractors currently only fire callbacks at depth 0 in our repro; when `read_ion`
-  steps into a struct (depth 1), callbacks do not fire even with `match_relative_paths=true`. Use only for
-  experiments; see `docs/ION_JSON_COMPARISON.md` for details.
 
-## Building
-### Dependencies
-This extension uses vcpkg for dependencies (ion-c) when available, and falls back to FetchContent if `IonC` is not found.
-Ensure `VCPKG_ROOT` points to your vcpkg checkout and that you have built it (`./bootstrap-vcpkg.sh`).
+## Ion Type Mapping
+For background on Ion types and encodings, see the AWS Ion documentation: https://amazon-ion.github.io/ion-docs/
 
-```sh
-CCACHE_DISABLE=1 VCPKG_TOOLCHAIN_PATH="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
-VCPKG_TARGET_TRIPLET="$(uname -m)-osx" make
-```
+| Ion type | DuckDB type | Notes |
+| --- | --- | --- |
+| null | NULL | Typed nulls follow the target column type when one is specified. |
+| bool | BOOLEAN |  |
+| int | BIGINT |  |
+| float | DOUBLE |  |
+| decimal | DECIMAL(18,3) | Uses DuckDB's default DECIMAL width/scale unless `columns` overrides it. |
+| timestamp | TIMESTAMPTZ |  |
+| string | VARCHAR |  |
+| symbol | VARCHAR | Symbols are read as strings. |
+| clob | VARCHAR |  |
+| blob | BLOB |  |
+| list | LIST | Element type inferred; mixed types promote to VARCHAR. |
+| struct | STRUCT | Field union with NULLs for missing fields. |
 
-The repo uses a local vcpkg overlay in `vcpkg_ports/`.
+Unsupported or not preserved yet:
+- Ion annotations are not preserved.
+- Ion symbol tables are not exposed.
+- S-expressions (sexp) are not supported.
 
-### Build Outputs
-```sh
-./build/release/duckdb
-./build/release/test/unittest
-./build/release/extension/ion/ion.duckdb_extension
-```
+## Development
+Build, test, and local run instructions live in `DEVELOPMENT.md`.
 
-### Updating Submodules
-DuckDB extensions use two submodules that are included in your forked extension repo when you use the `--recurse-submodules` flag. These modules are:
-
-| Name                  | Repository                                      | Description |
-|-----------------------|-------------------------------------------------|-------------|
-| duckdb                | https://github.com/duckdb/duckdb                | This repository contains core DuckDB code required for building extensions.            |
-| extension-ci-tools    | https://github.com/duckdb/extension-ci-tools    | This repository contains reusable components for building, testing and deploying DuckDB extensions.            |
-
-
-> [!IMPORTANT]  
-> It is recommended that you update your submodules at least once every other major LTS release to avoid CI/CD pipeline build errors caused by remaining pinned to a stale commit of these submodules.
-
-To update all submodules to the latest commit hash:
-```bash
-git submodule update --init --recursive
-```
-
-To update your submodules to a specific commit hash, for example to update duckdb to the hash `8e146474d7adb960c5a2941142fe4482cc7dfc08`:
-```bash
-cd duckdb 
-git fetch --all
-git checkout 8e146474d7adb960c5a2941142fe4482cc7dfc08   # or any tag/branch/commit hash
-cd ..
-git add duckdb
-git commit -m "Pin DuckDB submodule to cc7dfc08"
-git push HEAD:update-submodule-branch
-```
-
-## Running
-```sh
-./build/release/duckdb
-```
-
-Example:
+## Usage Examples
 ```sql
 SELECT bigint, varchar, bool FROM read_ion('test/ion/sample.ion');
 SELECT bigint, varchar, bool
@@ -103,25 +73,8 @@ SELECT bigint, varchar, bool
 FROM read_ion('test/ion/array.ion', format := 'array');
 SELECT name FROM read_ion('test/ion/structs_binary.ion');
 SELECT name FROM read_ion('test/ion/array_binary.ion', format := 'array');
-```
-
-Binary test fixtures can be regenerated with:
-```sh
-python3 scripts/generate_binary_ion_fixtures.py
-```
-
-## Performance Notes
-Current parsing builds `Value` objects for each Ion value and casts per row. This is functional but not optimized.
-If you want a quick baseline, use a large file and measure a full scan:
-```sql
-SELECT COUNT(*) FROM read_ion('path/to/large.ion');
-```
-Likely hotspots to optimize later: nested list/struct parsing, string conversions, and per‑row casting.
-
-## Tests
-SQLLogicTests live in `test/sql`:
-```sh
-make test
+SELECT nested.score, list_extract(nums, 1)
+FROM read_ion('test/ion/conflicts.ion', conflict_mode := 'json');
 ```
 
 ## Writing Ion
@@ -133,6 +86,23 @@ To wrap output in a single Ion list:
 ```sql
 COPY (SELECT 1 AS a UNION ALL SELECT 2 AS a) TO 'out.ion' (FORMAT ION, ARRAY TRUE);
 ```
+
+### DuckDB Type Mapping (Write)
+`to_ion` and `COPY ... FORMAT ION` use the following mappings:
+
+| DuckDB type | Ion type | Notes |
+| --- | --- | --- |
+| BOOLEAN | bool |  |
+| INT/UINT (all widths) | int |  |
+| FLOAT/DOUBLE | float |  |
+| DECIMAL | decimal |  |
+| DATE | string | Serialized as `YYYY-MM-DD`. |
+| TIMESTAMP/TIMESTAMPTZ | timestamp | Serialized as text with a `T` separator and `Z` when no timezone is present. |
+| VARCHAR/CHAR | string |  |
+| BLOB | blob | Base64 inside `{{...}}`. |
+| LIST | list |  |
+| STRUCT | struct | Field names are written as Ion symbols. |
+| other | string | Falls back to `value.ToString()`. |
 
 ### to_ion
 Use `to_ion` to serialize a value (including structs/lists) into Ion text:

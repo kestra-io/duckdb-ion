@@ -1,106 +1,106 @@
+import os
+import subprocess
+import sys
 from pathlib import Path
 
-
-def ion_ivm() -> bytes:
-    return bytes([0xE0, 0x01, 0x00, 0xEA])
-
-
-def ion_int(value: int) -> bytes:
-    if value < 0 or value > 255:
-        raise ValueError("value out of supported range for fixture")
-    return bytes([0x21, value])
-
-def ion_bool(value: bool) -> bytes:
-    return bytes([0x11 if value else 0x10])
-
-def ion_float64(value: float) -> bytes:
-    import struct
-
-    data = struct.pack(">d", value)
-    return bytes([0x48]) + data
+TEXT_SUFFIX = "_text.ion"
+EXTRA_TEXT_FIXTURES = {
+    "conflicts.ion": "conflicts_binary.ion",
+    "nested.ion": "nested_binary.ion",
+    "sample.ion": "sample_binary.ion",
+    "scalars.ion": "scalars_binary.ion",
+}
 
 
-def ion_string(text: str) -> bytes:
-    data = text.encode("utf-8")
-    if len(data) > 13:
-        raise ValueError("string too long for fixture")
-    return bytes([0x80 | len(data)]) + data
+def resolve_triplet() -> str:
+    os_name = os.uname().sysname.lower()
+    if os_name == "darwin":
+        os_name = "osx"
+    arch = os.uname().machine
+    return os.environ.get("VCPKG_TARGET_TRIPLET", f"{arch}-{os_name}")
 
 
-def ion_var_uint(value: int) -> bytes:
-    if value < 0 or value > 127:
-        raise ValueError("value out of supported varuint range for fixture")
-    return bytes([0x80 | value])
+def find_vcpkg_paths() -> tuple[Path, Path] | None:
+    triplet = resolve_triplet()
+    local_prefix = Path("vcpkg_installed") / triplet
+    vcpkg_root = os.environ.get("VCPKG_ROOT", "")
+    vcpkg_prefix = Path(vcpkg_root) / "installed" / triplet if vcpkg_root else None
+
+    for prefix in (local_prefix, vcpkg_prefix):
+        if prefix and prefix.is_dir():
+            include_dir = prefix / "include"
+            lib_dir = prefix / "lib"
+            if include_dir.is_dir() and lib_dir.is_dir():
+                return include_dir, lib_dir
+    return None
 
 
-def ion_struct_name(name: str) -> bytes:
-    return ion_struct_name_value(ion_string(name))
+def build_tool(tool_path: Path) -> bool:
+    paths = find_vcpkg_paths()
+    if not paths:
+        return False
+    include_dir, lib_dir = paths
+    cxx = os.environ.get("CXX", "c++")
+    source = Path("scripts/ion_text_to_binary.cpp")
+    if not source.exists():
+        raise FileNotFoundError(source)
+    tool_path.parent.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        cxx,
+        "-std=c++17",
+        "-O2",
+        f"-I{include_dir}",
+        str(source),
+        str(lib_dir / "libionc_static.a"),
+        str(lib_dir / "libdecNumber_static.a"),
+        "-o",
+        str(tool_path),
+    ]
+    subprocess.run(cmd, check=True)
+    return tool_path.exists()
 
 
-def ion_struct_name_value(value: bytes) -> bytes:
-    # Uses system symbol ID 4 ("name") for the field name.
-    field_sid = ion_var_uint(4)
-    body = field_sid + value
-    if len(body) > 13:
-        raise ValueError("struct body too large for fixture")
-    return bytes([0xD0 | len(body)]) + body
+def resolve_tool() -> Path:
+    env_tool = os.environ.get("ION_TEXT_TO_BINARY")
+    if env_tool:
+        return Path(env_tool)
+    return Path("build/ion_text_to_binary")
 
 
-def ion_list(values: list[bytes]) -> bytes:
-    body = b"".join(values)
-    # Length 15 is not representable in the nibble (0xF is null), so use 0xE + varuint.
-    if len(body) < 14:
-        return bytes([0xB0 | len(body)]) + body
-    if len(body) > 255:
-        raise ValueError("list body too large for fixture")
-    return bytes([0xBE]) + ion_var_uint(len(body)) + body
+def ensure_tool() -> Path:
+    tool = resolve_tool()
+    if tool.exists() and os.access(tool, os.X_OK):
+        return tool
+    if build_tool(tool) and os.access(tool, os.X_OK):
+        return tool
+    raise RuntimeError(
+        "ion text-to-binary tool not found. Set ION_TEXT_TO_BINARY to a built binary, "
+        "or install ion-c via vcpkg so this script can build scripts/ion_text_to_binary.cpp."
+    )
 
 
-def ion_blob(data: bytes) -> bytes:
-    if len(data) > 13:
-        raise ValueError("blob too long for fixture")
-    return bytes([0xA0 | len(data)]) + data
+def convert_fixture(tool: Path, base: Path, text_name: str, binary_name: str) -> None:
+    text_path = base / text_name
+    if not text_path.exists():
+        raise FileNotFoundError(text_path)
+    binary_path = base / binary_name
+    subprocess.run([str(tool), str(text_path), str(binary_path)], check=True)
 
 
-def write_binary(path: Path, data: bytes) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(data)
-
-
-def main() -> None:
+def main() -> int:
+    tool = ensure_tool()
     base = Path("test/ion")
-    scalars = ion_ivm() + ion_int(1) + ion_int(2) + ion_int(3)
-    write_binary(base / "scalars_binary.ion", scalars)
-
-    struct_alpha = ion_struct_name("alpha")
-    struct_beta = ion_struct_name("beta")
-    structs = ion_ivm() + struct_alpha + struct_beta
-    write_binary(base / "structs_binary.ion", structs)
-
-    array = ion_ivm() + ion_list([struct_alpha, struct_beta])
-    write_binary(base / "array_binary.ion", array)
-
-    bools = ion_ivm() + ion_bool(True) + ion_bool(False) + ion_bool(True)
-    write_binary(base / "bools_binary.ion", bools)
-
-    floats = ion_ivm() + ion_float64(1.0) + ion_float64(3.5) + ion_float64(-2.25)
-    write_binary(base / "floats_binary.ion", floats)
-
-    blobs = ion_ivm() + ion_blob(bytes([1, 2, 3])) + ion_blob(bytes([4, 5, 6]))
-    write_binary(base / "blobs_binary.ion", blobs)
-
-    list_one = ion_list([ion_int(1), ion_int(2), ion_int(3)])
-    list_two = ion_list([ion_int(4), ion_int(5)])
-    lists = ion_ivm() + list_one + list_two
-    write_binary(base / "lists_binary.ion", lists)
-
-    structs_name_int = ion_ivm() + ion_struct_name_value(ion_int(1)) + ion_struct_name_value(ion_int(2))
-    write_binary(base / "structs_name_int_binary.ion", structs_name_int)
-
-    list_three = ion_list([ion_int(3)])
-    structs_name_list = ion_ivm() + ion_struct_name_value(ion_list([ion_int(1), ion_int(2)])) + ion_struct_name_value(list_three)
-    write_binary(base / "structs_name_list_binary.ion", structs_name_list)
+    fixtures: list[tuple[str, str]] = []
+    for text_path in sorted(base.glob(f"*{TEXT_SUFFIX}")):
+        text_name = text_path.name
+        binary_name = text_name.replace(TEXT_SUFFIX, "_binary.ion")
+        fixtures.append((text_name, binary_name))
+    for text_name, binary_name in EXTRA_TEXT_FIXTURES.items():
+        fixtures.append((text_name, binary_name))
+    for text_name, binary_name in fixtures:
+        convert_fixture(tool, base, text_name, binary_name)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

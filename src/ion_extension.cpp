@@ -29,7 +29,10 @@
 #include "duckdb/common/helper.hpp"
 #include "duckdb/common/limits.hpp"
 #include "duckdb/common/multi_file/multi_file_reader.hpp"
+#include "duckdb/common/types/blob.hpp"
+#include "duckdb/main/extension_helper.hpp"
 #include <chrono>
+#include <cmath>
 #include <cstring>
 #include <iostream>
 #include <mutex>
@@ -53,8 +56,10 @@ struct IonReadBindData : public TableFunctionData {
 	unordered_map<string, idx_t> name_map;
 	enum class Format { AUTO, NEWLINE_DELIMITED, ARRAY, UNSTRUCTURED };
 	enum class RecordsMode { AUTO, ENABLED, DISABLED };
+	enum class ConflictMode { VARCHAR, JSON };
 	Format format = Format::AUTO;
 	RecordsMode records_mode = RecordsMode::AUTO;
+	ConflictMode conflict_mode = ConflictMode::VARCHAR;
 	idx_t max_depth = NumericLimits<idx_t>::Maximum();
 	double field_appearance_threshold = 0.1;
 	idx_t map_inference_threshold = 200;
@@ -206,7 +211,8 @@ static iERR IonStreamHandler(struct _ion_user_stream *pstream) {
 }
 
 static void InferIonSchema(const vector<string> &paths, vector<string> &names, vector<LogicalType> &types,
-                           IonReadBindData::Format format, IonReadBindData::RecordsMode records_mode, idx_t max_depth,
+                           IonReadBindData::Format format, IonReadBindData::RecordsMode records_mode,
+                           IonReadBindData::ConflictMode conflict_mode, idx_t max_depth,
                            double field_appearance_threshold, idx_t map_inference_threshold, idx_t sample_size,
                            idx_t maximum_sample_files, bool &records_out, ClientContext &context);
 static void ParseColumnsParameter(ClientContext &context, const Value &value, vector<string> &names,
@@ -221,6 +227,7 @@ static void ParseMaximumSampleFilesParameter(const Value &value, idx_t &maximum_
 static void ParseUnionByNameParameter(const Value &value, bool &union_by_name);
 static void ParseProfileParameter(const Value &value, bool &profile);
 static void ParseUseExtractorParameter(const Value &value, bool &use_extractor);
+static void ParseConflictModeParameter(const Value &value, IonReadBindData::ConflictMode &conflict_mode);
 static vector<string> ParseIonPaths(ClientContext &context, const Value &value);
 
 static unique_ptr<FunctionData> IonReadBind(ClientContext &context, TableFunctionBindInput &input,
@@ -260,8 +267,19 @@ static unique_ptr<FunctionData> IonReadBind(ClientContext &context, TableFunctio
 			ParseProfileParameter(kv.second, bind_data->profile);
 		} else if (option == "use_extractor") {
 			ParseUseExtractorParameter(kv.second, bind_data->use_extractor);
+		} else if (option == "conflict_mode") {
+			ParseConflictModeParameter(kv.second, bind_data->conflict_mode);
 		} else {
 			throw BinderException("read_ion does not support named parameter \"%s\"", kv.first);
+		}
+	}
+	if (bind_data->conflict_mode == IonReadBindData::ConflictMode::JSON) {
+		if (!ExtensionHelper::TryAutoLoadExtension(context, "json")) {
+			try {
+				ExtensionHelper::LoadExternalExtension(context, "json");
+			} catch (const Exception &) {
+				throw BinderException("read_ion conflict_mode 'json' requires the json extension");
+			}
 		}
 	}
 	if (bind_data->records_mode == IonReadBindData::RecordsMode::DISABLED && !bind_data->names.empty()) {
@@ -273,9 +291,9 @@ static unique_ptr<FunctionData> IonReadBind(ClientContext &context, TableFunctio
 			schema_paths.resize(1);
 		}
 		InferIonSchema(schema_paths, bind_data->names, bind_data->return_types, bind_data->format,
-		               bind_data->records_mode, bind_data->max_depth, bind_data->field_appearance_threshold,
-		               bind_data->map_inference_threshold, bind_data->sample_size, bind_data->maximum_sample_files,
-		               bind_data->records, context);
+		               bind_data->records_mode, bind_data->conflict_mode, bind_data->max_depth,
+		               bind_data->field_appearance_threshold, bind_data->map_inference_threshold,
+		               bind_data->sample_size, bind_data->maximum_sample_files, bind_data->records, context);
 	} else {
 		bind_data->records = true;
 	}
@@ -295,13 +313,12 @@ static bool ReadIonValueToVector(ION_READER *reader, ION_TYPE field_type, Vector
 static inline void SkipIonValue(ION_READER *reader, ION_TYPE type);
 static iERR IonExtractorCallback(hREADER reader, hPATH matched_path, void *user_context,
                                  ION_EXTRACTOR_CONTROL *p_control);
-#ifdef DUCKDB_IONC
-#endif
 
 struct IonStructureOptions {
 	idx_t max_depth;
 	double field_appearance_threshold;
 	idx_t map_inference_threshold;
+	IonReadBindData::ConflictMode conflict_mode;
 };
 
 struct IonStructureNode {
@@ -340,8 +357,9 @@ static LogicalTypeId IonTypeToLogicalTypeId(ION_TYPE type) {
 	case tid_INT_INT:
 		return LogicalTypeId::BIGINT;
 	case tid_FLOAT_INT:
-	case tid_DECIMAL_INT:
 		return LogicalTypeId::DOUBLE;
+	case tid_DECIMAL_INT:
+		return LogicalTypeId::DECIMAL;
 	case tid_TIMESTAMP_INT:
 		return LogicalTypeId::TIMESTAMP_TZ;
 	case tid_STRING_INT:
@@ -374,8 +392,14 @@ static void ExtractIonStructure(ION_READER *reader, ION_TYPE type, IonStructureN
 	auto logical_type = IonTypeToLogicalTypeId(type);
 	if (node.type == LogicalTypeId::INVALID) {
 		node.type = logical_type;
-	} else if (node.type != logical_type) {
-		node.inconsistent = true;
+	} else if (node.type != logical_type && !node.inconsistent) {
+		auto promoted = PromoteIonType(LogicalType(node.type), LogicalType(logical_type));
+		if (promoted.id() == LogicalTypeId::VARCHAR &&
+		    (node.type != LogicalTypeId::VARCHAR || logical_type != LogicalTypeId::VARCHAR)) {
+			node.inconsistent = true;
+		} else {
+			node.type = promoted.id();
+		}
 	}
 
 	if (depth >= options.max_depth) {
@@ -598,7 +622,8 @@ static LogicalType IonStructureToType(const IonStructureNode &node, const IonStr
 		return null_type;
 	}
 	if (node.inconsistent) {
-		return LogicalType::VARCHAR;
+		return options.conflict_mode == IonReadBindData::ConflictMode::JSON ? LogicalType::JSON()
+		                                                                    : LogicalType::VARCHAR;
 	}
 	switch (node.type) {
 	case LogicalTypeId::LIST: {
@@ -631,7 +656,7 @@ static LogicalType InferIonValueType(ION_READER *reader, ION_TYPE type) {
 	case tid_FLOAT_INT:
 		return LogicalType::DOUBLE;
 	case tid_DECIMAL_INT:
-		return LogicalType::DECIMAL(Decimal::MAX_WIDTH_DECIMAL, 18);
+		return LogicalType::DECIMAL(18, 3);
 	case tid_TIMESTAMP_INT:
 		return LogicalType::TIMESTAMP_TZ;
 	case tid_STRING_INT:
@@ -1060,8 +1085,233 @@ static bool IonDecimalToHugeint(const ION_DECIMAL &decimal, hugeint_t &result, u
 		return false;
 	}
 	auto decimal_str = string(buffer.data());
+	for (auto &ch : decimal_str) {
+		if (ch == 'd' || ch == 'D') {
+			ch = 'e';
+		}
+	}
 	CastParameters parameters(false, nullptr);
 	return TryCastToDecimal::Operation(string_t(decimal_str), result, parameters, width, scale);
+}
+
+static void AppendJsonEscapedString(const char *data, idx_t length, string &out) {
+	out.push_back('"');
+	for (idx_t i = 0; i < length; i++) {
+		auto c = static_cast<unsigned char>(data[i]);
+		switch (c) {
+		case '\\':
+			out += "\\\\";
+			break;
+		case '"':
+			out += "\\\"";
+			break;
+		case '\b':
+			out += "\\b";
+			break;
+		case '\f':
+			out += "\\f";
+			break;
+		case '\n':
+			out += "\\n";
+			break;
+		case '\r':
+			out += "\\r";
+			break;
+		case '\t':
+			out += "\\t";
+			break;
+		default:
+			if (c < 0x20) {
+				static constexpr char hex[] = "0123456789abcdef";
+				out += "\\u00";
+				out.push_back(hex[c >> 4]);
+				out.push_back(hex[c & 0x0F]);
+			} else {
+				out.push_back(static_cast<char>(c));
+			}
+			break;
+		}
+	}
+	out.push_back('"');
+}
+
+static void AppendJsonEscapedString(const string &input, string &out) {
+	AppendJsonEscapedString(input.data(), input.size(), out);
+}
+
+static void AppendIonValueAsJson(ION_READER *reader, ION_TYPE type, string &out) {
+	BOOL is_null = FALSE;
+	if (ion_reader_is_null(reader, &is_null) != IERR_OK) {
+		throw IOException("read_ion failed while checking null status");
+	}
+	if (is_null || type == tid_NULL || type == tid_EOF) {
+		out += "null";
+		return;
+	}
+	switch (ION_TYPE_INT(type)) {
+	case tid_BOOL_INT: {
+		BOOL value = FALSE;
+		if (ion_reader_read_bool(reader, &value) != IERR_OK) {
+			throw IOException("read_ion failed to read bool");
+		}
+		out += value != FALSE ? "true" : "false";
+		return;
+	}
+	case tid_INT_INT: {
+		int64_t value = 0;
+		if (ion_reader_read_int64(reader, &value) != IERR_OK) {
+			throw IOException("read_ion failed to read int");
+		}
+		out += std::to_string(value);
+		return;
+	}
+	case tid_FLOAT_INT: {
+		double value = 0.0;
+		if (ion_reader_read_double(reader, &value) != IERR_OK) {
+			throw IOException("read_ion failed to read float");
+		}
+		if (!std::isfinite(value)) {
+			out += "null";
+			return;
+		}
+		out += StringUtil::Format("%.17g", value);
+		return;
+	}
+	case tid_DECIMAL_INT: {
+		ION_DECIMAL decimal;
+		ion_decimal_zero(&decimal);
+		if (ion_reader_read_ion_decimal(reader, &decimal) != IERR_OK) {
+			throw IOException("read_ion failed to read decimal");
+		}
+		std::vector<char> buffer(ION_DECIMAL_STRLEN(&decimal) + 1);
+		ion_decimal_to_string(&decimal, buffer.data());
+		ion_decimal_free(&decimal);
+		auto decimal_str = string(buffer.data());
+		for (auto &ch : decimal_str) {
+			if (ch == 'd' || ch == 'D') {
+				ch = 'e';
+			}
+		}
+		out += decimal_str;
+		return;
+	}
+	case tid_TIMESTAMP_INT: {
+		ION_TIMESTAMP timestamp;
+		if (ion_reader_read_timestamp(reader, &timestamp) != IERR_OK) {
+			throw IOException("read_ion failed to read timestamp");
+		}
+		decContext ctx;
+		decContextDefault(&ctx, DEC_INIT_DECQUAD);
+		char buffer[ION_MAX_TIMESTAMP_STRING + 1];
+		SIZE output_length = 0;
+		if (ion_timestamp_to_string(&timestamp, buffer, sizeof(buffer), &output_length, &ctx) != IERR_OK) {
+			throw IOException("read_ion failed to format timestamp");
+		}
+		if (output_length > ION_MAX_TIMESTAMP_STRING) {
+			output_length = ION_MAX_TIMESTAMP_STRING;
+		}
+		buffer[output_length] = '\0';
+		AppendJsonEscapedString(buffer, output_length, out);
+		return;
+	}
+	case tid_STRING_INT:
+	case tid_SYMBOL_INT:
+	case tid_CLOB_INT: {
+		ION_STRING value;
+		value.value = nullptr;
+		value.length = 0;
+		if (ion_reader_read_string(reader, &value) != IERR_OK) {
+			throw IOException("read_ion failed to read string");
+		}
+		AppendJsonEscapedString(reinterpret_cast<const char *>(value.value), value.length, out);
+		return;
+	}
+	case tid_BLOB_INT: {
+		SIZE length = 0;
+		if (ion_reader_get_lob_size(reader, &length) != IERR_OK) {
+			throw IOException("read_ion failed to get blob size");
+		}
+		std::vector<BYTE> buffer(length);
+		SIZE read_bytes = 0;
+		if (ion_reader_read_lob_bytes(reader, buffer.data(), length, &read_bytes) != IERR_OK) {
+			throw IOException("read_ion failed to read blob");
+		}
+		auto encoded = Blob::ToBase64(string(reinterpret_cast<const char *>(buffer.data()), read_bytes));
+		AppendJsonEscapedString(encoded, out);
+		return;
+	}
+	case tid_LIST_INT: {
+		if (ion_reader_step_in(reader) != IERR_OK) {
+			throw IOException("read_ion failed to step into list");
+		}
+		out.push_back('[');
+		bool first = true;
+		while (true) {
+			ION_TYPE elem_type = tid_NULL;
+			auto elem_status = ion_reader_next(reader, &elem_type);
+			if (elem_status == IERR_EOF || elem_type == tid_EOF) {
+				break;
+			}
+			if (elem_status != IERR_OK) {
+				throw IOException("read_ion failed while reading list element");
+			}
+			if (!first) {
+				out += ", ";
+			}
+			first = false;
+			AppendIonValueAsJson(reader, elem_type, out);
+		}
+		if (ion_reader_step_out(reader) != IERR_OK) {
+			throw IOException("read_ion failed to step out of list");
+		}
+		out.push_back(']');
+		return;
+	}
+	case tid_STRUCT_INT: {
+		if (ion_reader_step_in(reader) != IERR_OK) {
+			throw IOException("read_ion failed to step into struct");
+		}
+		out.push_back('{');
+		bool first = true;
+		while (true) {
+			ION_TYPE field_type = tid_NULL;
+			auto field_status = ion_reader_next(reader, &field_type);
+			if (field_status == IERR_EOF || field_type == tid_EOF) {
+				break;
+			}
+			if (field_status != IERR_OK) {
+				throw IOException("read_ion failed while reading struct field");
+			}
+			ION_SYMBOL *field_symbol = nullptr;
+			if (ion_reader_get_field_name_symbol(reader, &field_symbol) != IERR_OK) {
+				throw IOException("read_ion failed to read field name");
+			}
+			ION_STRING field_name;
+			field_name.value = nullptr;
+			field_name.length = 0;
+			if (field_symbol && field_symbol->value.value && field_symbol->value.length > 0) {
+				field_name = field_symbol->value;
+			} else if (ion_reader_get_field_name(reader, &field_name) != IERR_OK) {
+				throw IOException("read_ion failed to read field name");
+			}
+			if (!first) {
+				out += ", ";
+			}
+			first = false;
+			AppendJsonEscapedString(reinterpret_cast<const char *>(field_name.value), field_name.length, out);
+			out += ": ";
+			AppendIonValueAsJson(reader, field_type, out);
+		}
+		if (ion_reader_step_out(reader) != IERR_OK) {
+			throw IOException("read_ion failed to step out of struct");
+		}
+		out.push_back('}');
+		return;
+	}
+	default:
+		throw NotImplementedException("read_ion JSON conversion does not support type id " +
+		                              std::to_string((int)ION_TYPE_INT(type)));
+	}
 }
 
 static bool IonFractionToMicros(decQuad &fraction, int32_t &micros) {
@@ -1245,8 +1495,14 @@ static Value IonReadValue(ION_READER *reader, ION_TYPE type) {
 		ion_decimal_to_string(&decimal, buffer.data());
 		ion_decimal_free(&decimal);
 		auto decimal_str = string(buffer.data());
+		auto normalized = decimal_str;
+		for (auto &ch : normalized) {
+			if (ch == 'd' || ch == 'D') {
+				ch = 'e';
+			}
+		}
 		CastParameters parameters(false, nullptr);
-		if (TryCastToDecimal::Operation(string_t(decimal_str), decimal_value, parameters, width, scale)) {
+		if (TryCastToDecimal::Operation(string_t(normalized), decimal_value, parameters, width, scale)) {
 			return Value::DECIMAL(decimal_value, width, scale);
 		}
 		return Value(decimal_str);
@@ -1369,6 +1625,9 @@ static Value IonReadValue(ION_READER *reader, ION_TYPE type) {
 }
 
 static LogicalType PromoteIonType(const LogicalType &existing, const LogicalType &incoming) {
+	if (existing.IsJSONType() || incoming.IsJSONType()) {
+		return LogicalType::JSON();
+	}
 	if (existing.id() == LogicalTypeId::SQLNULL) {
 		return incoming;
 	}
@@ -1419,7 +1678,7 @@ static LogicalType PromoteIonType(const LogicalType &existing, const LogicalType
 static LogicalType NormalizeInferredIonType(const LogicalType &type) {
 	switch (type.id()) {
 	case LogicalTypeId::DECIMAL:
-		return LogicalType::DOUBLE;
+		return LogicalType::DECIMAL(18, 3);
 	case LogicalTypeId::STRUCT: {
 		child_list_t<LogicalType> children;
 		auto &child_types = StructType::GetChildTypes(type);
@@ -1448,6 +1707,18 @@ static bool ReadIonValueToVector(ION_READER *reader, ION_TYPE field_type, Vector
 		throw IOException("read_ion failed while checking null status");
 	}
 	if (is_null) {
+		return true;
+	}
+	if (target_type.IsJSONType()) {
+		string json_value;
+		AppendIonValueAsJson(reader, field_type, json_value);
+		auto data = FlatVector::GetData<string_t>(vector);
+		data[row] = StringVector::AddString(vector, json_value);
+		FlatVector::Validity(vector).SetValid(row);
+		if (ion_timing_context) {
+			IncrementIonTimingForType(field_type);
+			ion_timing_context->vector_success++;
+		}
 		return true;
 	}
 	switch (target_type.id()) {
@@ -1507,6 +1778,11 @@ static bool ReadIonValueToVector(ION_READER *reader, ION_TYPE field_type, Vector
 			ion_decimal_to_string(&decimal, buffer.data());
 			ion_decimal_free(&decimal);
 			auto decimal_str = string(buffer.data());
+			for (auto &ch : decimal_str) {
+				if (ch == 'd' || ch == 'D') {
+					ch = 'e';
+				}
+			}
 			if (!TryCast::Operation(string_t(decimal_str), value, false)) {
 				return false;
 			}
@@ -1551,6 +1827,11 @@ static bool ReadIonValueToVector(ION_READER *reader, ION_TYPE field_type, Vector
 			ion_decimal_to_string(&decimal, buffer.data());
 			ion_decimal_free(&decimal);
 			auto decimal_str = string(buffer.data());
+			for (auto &ch : decimal_str) {
+				if (ch == 'd' || ch == 'D') {
+					ch = 'e';
+				}
+			}
 			CastParameters parameters(false, nullptr);
 			if (!TryCastToDecimal::Operation(string_t(decimal_str), decimal_value, parameters, width, scale)) {
 				return false;
@@ -1558,8 +1839,17 @@ static bool ReadIonValueToVector(ION_READER *reader, ION_TYPE field_type, Vector
 		} else {
 			ion_decimal_free(&decimal);
 		}
-		auto data = FlatVector::GetData<hugeint_t>(vector);
-		data[row] = decimal_value;
+		if (target_type.InternalType() == PhysicalType::INT64) {
+			int64_t value_i64 = 0;
+			if (!Hugeint::TryCast(decimal_value, value_i64)) {
+				return false;
+			}
+			auto data = FlatVector::GetData<int64_t>(vector);
+			data[row] = value_i64;
+		} else {
+			auto data = FlatVector::GetData<hugeint_t>(vector);
+			data[row] = decimal_value;
+		}
 		FlatVector::Validity(vector).SetValid(row);
 		if (ion_timing_context) {
 			IncrementIonTimingForType(field_type);
@@ -1794,6 +2084,20 @@ static void ParseUseExtractorParameter(const Value &value, bool &use_extractor) 
 	use_extractor = BooleanValue::Get(value);
 }
 
+static void ParseConflictModeParameter(const Value &value, IonReadBindData::ConflictMode &conflict_mode) {
+	if (value.type().id() != LogicalTypeId::VARCHAR) {
+		throw BinderException("read_ion \"conflict_mode\" parameter must be VARCHAR.");
+	}
+	auto mode = StringUtil::Lower(StringValue::Get(value));
+	if (mode == "varchar") {
+		conflict_mode = IonReadBindData::ConflictMode::VARCHAR;
+	} else if (mode == "json") {
+		conflict_mode = IonReadBindData::ConflictMode::JSON;
+	} else {
+		throw BinderException("read_ion \"conflict_mode\" must be one of ['varchar', 'json'].");
+	}
+}
+
 static vector<string> ParseIonPaths(ClientContext &context, const Value &value) {
 	vector<string> raw_paths;
 	if (value.type().id() == LogicalTypeId::VARCHAR) {
@@ -1823,7 +2127,8 @@ static vector<string> ParseIonPaths(ClientContext &context, const Value &value) 
 }
 
 static void InferIonSchema(const vector<string> &paths, vector<string> &names, vector<LogicalType> &types,
-                           IonReadBindData::Format format, IonReadBindData::RecordsMode records_mode, idx_t max_depth,
+                           IonReadBindData::Format format, IonReadBindData::RecordsMode records_mode,
+                           IonReadBindData::ConflictMode conflict_mode, idx_t max_depth,
                            double field_appearance_threshold, idx_t map_inference_threshold, idx_t sample_size,
                            idx_t maximum_sample_files, bool &records_out, ClientContext &context) {
 	ION_READER *reader = nullptr;
@@ -1832,7 +2137,7 @@ static void InferIonSchema(const vector<string> &paths, vector<string> &names, v
 	ION_READER_OPTIONS reader_options = {};
 	reader_options.skip_character_validation = TRUE;
 
-	IonStructureOptions options {max_depth, field_appearance_threshold, map_inference_threshold};
+	IonStructureOptions options {max_depth, field_appearance_threshold, map_inference_threshold, conflict_mode};
 	unordered_map<string, idx_t> index_by_name;
 	unordered_map<SID, idx_t> sid_map;
 	vector<IonStructureNode> field_nodes;
@@ -2425,7 +2730,9 @@ static void LoadInternal(ExtensionLoader &loader) {
 	read_ion.named_parameters["sample_size"] = LogicalType::BIGINT;
 	read_ion.named_parameters["maximum_sample_files"] = LogicalType::BIGINT;
 	read_ion.named_parameters["union_by_name"] = LogicalType::BOOLEAN;
+	read_ion.named_parameters["conflict_mode"] = LogicalType::VARCHAR;
 	read_ion.named_parameters["profile"] = LogicalType::BOOLEAN;
+	read_ion.named_parameters["use_extractor"] = LogicalType::BOOLEAN;
 	read_ion.projection_pushdown = true;
 	read_ion.filter_pushdown = false;
 	read_ion.filter_prune = false;

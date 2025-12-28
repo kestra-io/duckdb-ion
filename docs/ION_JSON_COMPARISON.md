@@ -33,8 +33,8 @@ the biggest optimization opportunities likely sit. It focuses on the ingestion p
 
 ## Behavioral Differences
 - Ion supports typed values (decimals, timestamps, blobs, symbols) that do not have JSON equivalents.
-- JSON allows unstructured ingestion into `JSON` type when inference conflicts; Ion currently promotes to
-  `VARCHAR` as a last resort.
+- JSON allows unstructured ingestion into `JSON` type when inference conflicts; Ion defaults to `VARCHAR`
+  but can map conflicts to JSON with `conflict_mode := 'json'` (values are serialized to JSON strings).
 
 ## Improvement Options
 - **Reduce struct traversal cost:** minimize `step_in/step_out` and per-field overhead; treat this as the primary
@@ -55,14 +55,25 @@ the biggest optimization opportunities likely sit. It focuses on the ingestion p
 - Binary Ion dramatically reduces `struct_ms`, reinforcing that text traversal/name resolution is the hotspot.
 
 ## Ion Extractor Findings (2025-02)
-- A standalone repro in `scripts/ion_extractor_repro.cpp` shows callbacks fire when the reader is **before first value**
-  at depth 0 (ion-c expects `ion_extractor_match` to drive `ion_reader_next` internally).
-- If the reader is already positioned on a value (`ion_reader_next` called) or stepped into a struct (depth 1),
-  callbacks do **not** fire, even with `match_relative_paths = true`.
-- A zero-length path at depth>0 does fire, but only as a **match-all**; field-level filtering must then happen in the
-  callback, which removes most pruning benefit.
-- `read_ion` steps into structs before reading fields, so extractor matching is unreliable beyond depth 0.
-- Extractor usage is disabled by default; it can be forced for experiments via `use_extractor := true`.
+### How read_json does it
+- `read_json` builds a per-batch key map (field name -> column index) while traversing the object DOM produced by `yyjson`.
+- It can skip non-projected fields cheaply because the DOM already has structured field offsets.
+
+### What we tried in read_ion
+- We wired ion-c extractors to match projected field names and materialize only those values.
+- The implementation registers a path per projected column and calls `ion_extractor_match` against the reader.
+- This is enabled only for small projections and is disabled by default.
+
+### Why it doesn't work reliably
+- ion-c expects to drive `ion_reader_next` inside `ion_extractor_match` when the reader is **before the first value**.
+- `read_ion` must call `ion_reader_next` and `ion_reader_step_in` to enter structs, so the reader is already positioned.
+- In that state, callbacks do **not** fire for field paths (even with `match_relative_paths = true`).
+- A zero-length path at depth > 0 becomes a match-all and forces filtering in the callback, which removes most benefit.
+- Net result: extractor usage is unreliable beyond depth 0 and is not suitable for production paths yet.
+
+### Future note: ion-c JSON down-conversion
+- ion-c has a text-writer option for lossy Ion→JSON down-conversion (including handling of multiple top-level values).
+- We are not using that path yet; the current JSON fallback is a custom serializer.
 
 ## Next Implementation Sketch
 - **Phase 1: Field lookup fast path**

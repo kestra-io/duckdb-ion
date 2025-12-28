@@ -1,0 +1,40 @@
+extension:
+  name: ion
+  description: Read and write AWS Ion data with typed mappings
+  version: 0.1.0
+  language: C++
+  build: cmake
+  license: MIT
+  maintainers:
+    - proddata
+
+  # (Optional) param that specifies required extra toolchains
+  requires_toolchains: <"">
+  # (Optional) param that specifies a precise vcpkg commit to use
+  vcpkg_commit: <"">
+  # (Optional) this extension requires additional custom toolchain setup
+  custom_toolchain_script: <false>
+  # (Optional) ';' separated list of additional platforms
+  opt_in_platforms: <"">
+
+repo:
+  github: proddata/duckdb-ion
+  ref: v0.1.0
+
+docs:
+  hello_world: |
+    -- Read from a file in Ion text or binary format
+    FROM 'sample.ion';
+    FROM read_ion('sample.ion');
+    FROM read_ion('data/*.ion');
+
+    -- Control schema and parsing options
+    FROM read_ion('sample.ion', columns := {id: 'BIGINT', label: 'VARCHAR'});
+    FROM read_ion('scalars.ion', records := false);
+    FROM read_ion('array.ion', format := 'array');
+
+    -- Write a file in Ion text or binary format
+    CREATE TABLE ion_demo AS SELECT 1::INTEGER AS id, 'hello' AS label;
+    COPY ion_demo TO 'out.ion' (FORMAT ION);
+  extended_description: |
+    The ion extension enables DuckDB to read and write AWS Ion in text and binary formats, preserving Ion types where possible for richer analytics.

@@ -71,4 +71,4 @@ PATH="$(pwd)/.venv/bin:$PATH" make format-check
 
 ## Dependencies & Submodules
 - `duckdb/` provides core build/test infrastructure; keep it updated when needed.
-- Optional dependency management uses VCPKG; see `docs/README.md` for setup.
+- Optional dependency management uses VCPKG; see `README.md` for setup.
