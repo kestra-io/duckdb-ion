@@ -10,7 +10,11 @@ test/python/__pycache__/
 .venv/
 vcpkg_installed/
 .perf/
-perf/
+perf/*
+!perf/baseline/
+perf/baseline/*
+!perf/baseline/summary.jsonl
+!perf/baseline/summary.md
 *.o
 *.obj
 *.a

@@ -80,6 +80,22 @@ jobs:
           ROWS=20000 scripts/perf_generate.sh
           RUNS=1 scripts/mem_check.sh
 
+      - name: Perf Check (small)
+        if: matrix.arch == 'x64'
+        run: |
+          ROWS=20000 OUT_DIR=perf/ci_data scripts/perf_generate.sh
+          RUN_TS="ci-${{ github.sha }}" \
+            GIT_SHA="${{ github.sha }}" \
+            DATA_DIR=perf/ci_data \
+            OUT_DIR=perf/ci \
+            scripts/perf_run.sh
+          python3 scripts/perf_compare.py \
+            --baseline perf/baseline/summary.jsonl \
+            --current perf/ci/summary.jsonl \
+            --run-ts "ci-${{ github.sha }}" \
+            --cpu-threshold 0.2 \
+            --lat-threshold 0.2
+
       - name: Format Check
         if: matrix.arch == 'x64'
         run: |

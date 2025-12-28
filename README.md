@@ -27,7 +27,7 @@ This repository implements a DuckDB extension for reading and writing AWS Ion da
 - `maximum_sample_files`: cap on files sampled during schema inference; `-1` removes the cap.
 - `union_by_name`: when reading multiple files, infer the schema from all files instead of the first file only.
 - `conflict_mode`: `'varchar'` (default) or `'json'` to map conflicting fields to JSON (auto-loads json when available).
-- `use_extractor`: BOOLEAN (default false) to use the ion-c extractor for projected columns when possible.
+- `use_extractor`: BOOLEAN (default false). Experimental and currently disabled due to incorrect results; do not enable.
 - You can combine `format` with `records` (e.g., `format := 'array', records := 'false'`). `columns` requires `records=true`.
 - When input structs have different fields, the schema is the union of field names and missing fields are returned as NULL.
 - Type conflicts are promoted across rows (e.g., INT + DOUBLE → DOUBLE, mixed types → VARCHAR, nested fields are merged).
@@ -88,6 +88,9 @@ Binary output:
 ```sql
 COPY (SELECT 1 AS a, 'x' AS b) TO 'out.ion' (FORMAT ION, BINARY TRUE);
 ```
+Notes:
+- Binary output currently normalizes timestamps to UTC (`Z`) and ignores source timezone offsets.
+  This is intended for interoperability but should be considered when round-tripping TIMESTAMPTZ values.
 To wrap output in a single Ion list:
 ```sql
 COPY (SELECT 1 AS a UNION ALL SELECT 2 AS a) TO 'out.ion' (FORMAT ION, ARRAY TRUE);
