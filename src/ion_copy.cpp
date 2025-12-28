@@ -283,7 +283,8 @@ static void AppendTimestampString(const Value &value, string &out) {
 static void WriteIonValue(hWRITER writer, const Value &value, const LogicalType &type, IonWriteStreamState &state) {
 	if (value.IsNull()) {
 		auto ion_type = IonTypeFromLogicalType(type);
-		iERR status = ion_type == tid_NULL ? ion_writer_write_null(writer) : ion_writer_write_typed_null(writer, ion_type);
+		iERR status =
+		    ion_type == tid_NULL ? ion_writer_write_null(writer) : ion_writer_write_typed_null(writer, ion_type);
 		if (status != IERR_OK) {
 			ThrowIonWriterException(state, "write_ion failed to write null", status);
 		}
@@ -487,8 +488,7 @@ static void WriteIonValue(hWRITER writer, const Value &value, const LogicalType 
 }
 
 static unique_ptr<FunctionData> IonBinaryCopyBind(ClientContext &context, CopyFunctionBindInput &input,
-                                                  const vector<string> &names,
-                                                  const vector<LogicalType> &sql_types) {
+                                                  const vector<string> &names, const vector<LogicalType> &sql_types) {
 	auto result = make_uniq<IonBinaryCopyBindData>();
 	result->names = names;
 	result->types = sql_types;
