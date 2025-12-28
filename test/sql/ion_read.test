@@ -4,6 +4,9 @@
 
 require ion
 
+statement ok
+LOAD json;
+
 query IIIIII
 SELECT bigint,
        varchar,
