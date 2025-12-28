@@ -5,6 +5,9 @@ DUCKDB_BIN="${DUCKDB_BIN:-./build/release/duckdb}"
 DATA_DIR="${DATA_DIR:-perf/data}"
 OUT_DIR="${OUT_DIR:-perf/results}"
 ION_PROFILE="${ION_PROFILE:-0}"
+RUN_TS="${RUN_TS:-$(date -u +"%Y-%m-%dT%H:%M:%SZ")}"
+GIT_SHA="${GIT_SHA:-$(git rev-parse --short HEAD 2>/dev/null || echo unknown)}"
+export RUN_TS GIT_SHA
 
 ION_FILE="$DATA_DIR/data.ion"
 JSON_FILE="$DATA_DIR/data.jsonl"
@@ -192,7 +195,11 @@ import os
 
 out_dir = os.environ.get("OUT_DIR", "perf/results")
 summary_path = os.path.join(out_dir, "summary.md")
+summary_jsonl = os.path.join(out_dir, "summary.jsonl")
+run_ts = os.environ.get("RUN_TS", "unknown")
+git_sha = os.environ.get("GIT_SHA", "unknown")
 summary_lines = []
+jsonl_rows = []
 
 def load(path):
     with open(path, "r", encoding="utf-8") as f:
@@ -216,6 +223,20 @@ def summarize_pairs(title, pairs):
     for label, ion_file, json_file in pairs:
         ion = load(os.path.join(out_dir, ion_file))
         js = load(os.path.join(out_dir, json_file))
+        jsonl_rows.append({
+            "run_ts": run_ts,
+            "git_sha": git_sha,
+            "suite": title,
+            "label": label,
+            "ion_file": ion_file,
+            "json_file": json_file,
+            "ion_cpu": ion["cpu_time"],
+            "json_cpu": js["cpu_time"],
+            "cpu_ratio": ion["cpu_time"] / js["cpu_time"] if js["cpu_time"] else None,
+            "ion_latency": ion["latency"],
+            "json_latency": js["latency"],
+            "latency_ratio": ion["latency"] / js["latency"] if js["latency"] else None,
+        })
         line = (
             f"{label} | {fmt(ion['cpu_time'])} | {fmt(js['cpu_time'])} | {ratio(ion['cpu_time'], js['cpu_time'])} | "
             f"{fmt(ion['latency'])} | {fmt(js['latency'])} | {ratio(ion['latency'], js['latency'])}"
@@ -235,6 +256,20 @@ def summarize_binary(title, pairs):
     for label, text_file, bin_file in pairs:
         text = load(os.path.join(out_dir, text_file))
         binary = load(os.path.join(out_dir, bin_file))
+        jsonl_rows.append({
+            "run_ts": run_ts,
+            "git_sha": git_sha,
+            "suite": title,
+            "label": label,
+            "text_file": text_file,
+            "binary_file": bin_file,
+            "text_cpu": text["cpu_time"],
+            "binary_cpu": binary["cpu_time"],
+            "cpu_ratio": text["cpu_time"] / binary["cpu_time"] if binary["cpu_time"] else None,
+            "text_latency": text["latency"],
+            "binary_latency": binary["latency"],
+            "latency_ratio": text["latency"] / binary["latency"] if binary["latency"] else None,
+        })
         line = (
             f"{label} | {fmt(text['cpu_time'])} | {fmt(binary['cpu_time'])} | {ratio(text['cpu_time'], binary['cpu_time'])} | "
             f"{fmt(text['latency'])} | {fmt(binary['latency'])} | {ratio(text['latency'], binary['latency'])}"
@@ -286,6 +321,12 @@ with open(summary_path, "w", encoding="utf-8") as f:
     f.write("\n".join(summary_lines).rstrip())
     f.write("\n")
 
+if jsonl_rows:
+    with open(summary_jsonl, "a", encoding="utf-8") as f:
+        for row in jsonl_rows:
+            f.write(json.dumps(row) + "\n")
+
 print(f"Wrote profiling output to {out_dir}")
 print(f"Wrote summary to {summary_path}")
+print(f"Appended summary to {summary_jsonl}")
 PY

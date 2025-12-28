@@ -79,6 +79,18 @@ SELECT typeof(id) FROM read_ion('test/ion/nested.ion') LIMIT 1;
 ----
 VARCHAR
 
+query I
+SELECT id FROM read_ion('test/ion/nested.ion');
+----
+1
+two
+
+query I
+SELECT id FROM read_ion('test/ion/nested.ion', columns := {id: 'VARCHAR'});
+----
+1
+two
+
 query IIII
 SELECT id,
        nested.name,
