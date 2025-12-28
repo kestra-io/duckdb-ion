@@ -26,6 +26,7 @@
 #include <ionc/ion_writer.h>
 
 #include <decNumber/decContext.h>
+#include <cstring>
 
 namespace duckdb {
 
@@ -367,6 +368,7 @@ static void WriteIonValue(hWRITER writer, const Value &value, const LogicalType 
 		int32_t day = 0;
 		Date::Convert(date_value, year, month, day);
 		ION_TIMESTAMP timestamp;
+		std::memset(&timestamp, 0, sizeof(timestamp));
 		auto status = ion_timestamp_for_day(&timestamp, year, month, day);
 		if (status == IERR_OK) {
 			status = ion_writer_write_timestamp(writer, &timestamp);
@@ -378,17 +380,32 @@ static void WriteIonValue(hWRITER writer, const Value &value, const LogicalType 
 	}
 	case LogicalTypeId::TIMESTAMP:
 	case LogicalTypeId::TIMESTAMP_TZ: {
-		string timestamp_text;
-		AppendTimestampString(value, timestamp_text);
+		timestamp_t ts;
+		if (type.id() == LogicalTypeId::TIMESTAMP_TZ) {
+			ts = timestamp_t(value.GetValue<timestamp_tz_t>());
+		} else {
+			ts = value.GetValue<timestamp_t>();
+		}
+		auto timestamp_text = Timestamp::ToString(ts);
+		auto pos = timestamp_text.find(' ');
+		if (pos != string::npos) {
+			timestamp_text[pos] = 'T';
+		}
+		timestamp_text += "Z";
 		auto mutable_text = timestamp_text;
 		ION_TIMESTAMP timestamp;
+		std::memset(&timestamp, 0, sizeof(timestamp));
 		decContext context;
 		decContextDefault(&context, DEC_INIT_DECQUAD);
 		SIZE used = 0;
 		auto status = ion_timestamp_parse(&timestamp, &mutable_text[0], mutable_text.size(), &used, &context);
-		if (status == IERR_OK) {
-			status = ion_writer_write_timestamp(writer, &timestamp);
+		if (status != IERR_OK) {
+			ThrowIonWriterException(state, "write_ion failed to parse timestamp", status);
 		}
+		if (type.id() == LogicalTypeId::TIMESTAMP_TZ) {
+			ion_timestamp_set_local_offset(&timestamp, 0);
+		}
+		status = ion_writer_write_timestamp(writer, &timestamp);
 		if (status != IERR_OK) {
 			ThrowIonWriterException(state, "write_ion failed to write timestamp", status);
 		}

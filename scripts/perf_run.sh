@@ -31,6 +31,11 @@ LOAD ion;
 
 PRAGMA enable_profiling='json';
 
+CREATE OR REPLACE TEMP TABLE perf_source AS
+SELECT * FROM read_ion('$ION_FILE');
+CREATE OR REPLACE TEMP TABLE perf_wide AS
+SELECT * FROM read_ion('$ION_WIDE_FILE');
+
 PRAGMA profiling_output='$OUT_DIR/ion_count.json';
 SELECT COUNT(*) FROM read_ion('$ION_FILE'${ION_PROFILE_ARG});
 
@@ -165,6 +170,24 @@ FROM read_ion('$ION_WIDE_BINARY_FILE'${ION_PROFILE_ARG});
 PRAGMA profiling_output='$OUT_DIR/json_project_wide.json';
 SELECT id, w_int_00, w_str_00, w_dec_00
 FROM read_json('$JSON_WIDE_FILE');
+
+PRAGMA profiling_output='$OUT_DIR/ion_write_text.json';
+COPY perf_source TO '$OUT_DIR/write_text.ion' (FORMAT ION, OVERWRITE TRUE);
+
+PRAGMA profiling_output='$OUT_DIR/ion_write_binary.json';
+COPY perf_source TO '$OUT_DIR/write_binary.ion' (FORMAT ION, BINARY TRUE, OVERWRITE TRUE);
+
+PRAGMA profiling_output='$OUT_DIR/json_write_text.json';
+COPY perf_source TO '$OUT_DIR/write_text.jsonl' (FORMAT JSON, OVERWRITE TRUE);
+
+PRAGMA profiling_output='$OUT_DIR/ion_write_text_wide.json';
+COPY perf_wide TO '$OUT_DIR/write_text_wide.ion' (FORMAT ION, OVERWRITE TRUE);
+
+PRAGMA profiling_output='$OUT_DIR/ion_write_binary_wide.json';
+COPY perf_wide TO '$OUT_DIR/write_binary_wide.ion' (FORMAT ION, BINARY TRUE, OVERWRITE TRUE);
+
+PRAGMA profiling_output='$OUT_DIR/json_write_text_wide.json';
+COPY perf_wide TO '$OUT_DIR/write_text_wide.jsonl' (FORMAT JSON, OVERWRITE TRUE);
 
 PRAGMA threads=4;
 
@@ -313,6 +336,22 @@ summarize_binary(
         ("Project 3 cols", "ion_project.json", "ion_project_binary.json"),
         ("Wide COUNT(*)", "ion_count_wide.json", "ion_count_wide_binary.json"),
         ("Wide project (4 cols)", "ion_project_wide.json", "ion_project_wide_binary.json"),
+    ],
+)
+
+summarize_pairs(
+    "Ion vs JSON (write)",
+    [
+        ("Write", "ion_write_text.json", "json_write_text.json"),
+        ("Write wide", "ion_write_text_wide.json", "json_write_text_wide.json"),
+    ],
+)
+
+summarize_binary(
+    "Ion write text vs binary",
+    [
+        ("Write", "ion_write_text.json", "ion_write_binary.json"),
+        ("Write wide", "ion_write_text_wide.json", "ion_write_binary_wide.json"),
     ],
 )
 
