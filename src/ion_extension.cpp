@@ -2668,6 +2668,9 @@ static void IonReadFunction(ClientContext &context, TableFunctionInput &data_p, 
 							throw IOException("read_ion failed to read field name");
 						}
 					}
+					if (!field_value.value) {
+						field_value.length = 0;
+					}
 					const auto name_ptr = field_value.value ? reinterpret_cast<const char *>(field_value.value) : "";
 					auto name_key = string(name_ptr, field_value.length);
 					auto map_it = global_state.name_view_map.find(name_key);
