@@ -66,6 +66,14 @@ SQLLogicTests live in `test/sql`:
 make test
 ```
 
+## Community Extension Notes
+DuckDB community extensions are built and distributed from the Community Extension repository, not this repo.
+Before submitting:
+- Ensure CI is green (tests, perf checks, mem checks).
+- Keep README up to date with current limitations (experimental flags, binary behavior).
+- Verify the extension loads and installs via `INSTALL ion FROM community;` once published.
+Community extension docs: https://community-extensions.duckdb.org
+
 ## Fixtures
 Binary test fixtures can be regenerated with:
 ```sh
