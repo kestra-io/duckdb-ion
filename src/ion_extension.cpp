@@ -54,7 +54,7 @@ struct IonReadBindData : public TableFunctionData {
 	vector<LogicalType> return_types;
 	vector<string> names;
 	unordered_map<string, idx_t> name_map;
-	enum class Format { AUTO, NEWLINE_DELIMITED, ARRAY, UNSTRUCTURED };
+	enum class Format { AUTO, NEWLINE_DELIMITED, ARRAY };
 	enum class RecordsMode { AUTO, ENABLED, DISABLED };
 	enum class ConflictMode { VARCHAR, JSON };
 	Format format = Format::AUTO;
@@ -2021,11 +2021,8 @@ static void ParseFormatParameter(const Value &value, IonReadBindData::Format &fo
 		format = IonReadBindData::Format::NEWLINE_DELIMITED;
 	} else if (format_str == "array") {
 		format = IonReadBindData::Format::ARRAY;
-	} else if (format_str == "unstructured") {
-		format = IonReadBindData::Format::UNSTRUCTURED;
 	} else {
-		throw BinderException(
-		    "read_ion \"format\" must be one of ['auto', 'newline_delimited', 'array', 'unstructured'].");
+		throw BinderException("read_ion \"format\" must be one of ['auto', 'newline_delimited', 'array'].");
 	}
 }
 
