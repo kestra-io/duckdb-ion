@@ -11,6 +11,10 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Clean workspace
+        run: |
+          git clean -fdx
+
       - name: Prepare cache dir
         run: |
           mkdir -p ccache_dir
