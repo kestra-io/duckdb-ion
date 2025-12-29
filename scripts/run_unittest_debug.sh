@@ -3,6 +3,7 @@ set -euo pipefail
 
 UNITTEST_BIN="${UNITTEST_BIN:-./build/release/test/unittest}"
 MAX_ATTEMPTS="${MAX_ATTEMPTS:-5}"
+GDB_ATTEMPTS="${GDB_ATTEMPTS:-3}"
 
 if [[ "$#" -lt 1 ]]; then
   echo "Usage: $0 <test-path> [test-path ...]" >&2
@@ -28,6 +29,16 @@ for test_path in "$@"; do
       -ex "run" \
       -ex "bt" \
       --args "$UNITTEST_BIN" "$test_path"
+
+    gdb_attempt=1
+    while [[ "$gdb_attempt" -le "$GDB_ATTEMPTS" ]]; do
+      echo "Retrying $test_path under gdb (attempt $gdb_attempt/$GDB_ATTEMPTS)" >&2
+      gdb --batch \
+        -ex "set pagination off" \
+        -ex "run" \
+        -ex "bt" \
+        --args "$UNITTEST_BIN" "$test_path" && gdb_attempt=$((gdb_attempt + 1)) || exit 1
+    done
     exit 1
   done
 done
