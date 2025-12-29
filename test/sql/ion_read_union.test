@@ -1,0 +1,21 @@
+# name: test/sql/ion_read_union.test
+# description: read_ion union_by_name coverage
+# group: [sql]
+
+require ion
+
+query II
+SELECT typeof(a), typeof(b)
+FROM read_ion(['test/ion/multi_union_1.ion', 'test/ion/multi_union_2.ion'], union_by_name := true)
+LIMIT 1;
+----
+BIGINT	BIGINT
+
+query I
+SELECT COUNT(*)
+FROM read_ion(['test/ion/multi_union_1.ion', 'test/ion/multi_union_2.ion'],
+              union_by_name := true,
+              maximum_sample_files := 1,
+              sample_size := 1);
+----
+2

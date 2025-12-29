@@ -1,0 +1,46 @@
+# name: test/sql/ion_read_nested.test
+# description: read_ion nested structs/lists
+# group: [sql]
+
+require ion
+
+query IIII
+SELECT id,
+       nested.name,
+       list_extract(tags, 1),
+       list_extract(nums, 2)
+FROM read_ion('test/ion/nested.ion');
+----
+1	alpha	x	2
+two	beta	z	NULL
+
+query I
+SELECT typeof(id) FROM read_ion('test/ion/nested.ion') LIMIT 1;
+----
+VARCHAR
+
+query I
+SELECT id FROM read_ion('test/ion/nested.ion');
+----
+1
+two
+
+query I
+SELECT id FROM read_ion('test/ion/nested.ion', columns := {id: 'VARCHAR'});
+----
+1
+two
+
+query IIII
+SELECT id,
+       nested.name,
+       list_extract(tags, 1),
+       list_extract(nums, 2)
+FROM read_ion('test/ion/nested.ion',
+              columns := {id: 'VARCHAR',
+                          nested: 'STRUCT(name VARCHAR, score BIGINT)',
+                          tags: 'VARCHAR[]',
+                          nums: 'BIGINT[]'});
+----
+1	alpha	x	2
+two	beta	z	NULL
