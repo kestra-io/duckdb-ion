@@ -1,0 +1,23 @@
+# name: test/sql/ion_read_binary_parity_arrays.test
+# description: read_ion binary parity for arrays
+# group: [sql]
+
+require ion
+
+query I
+SELECT COUNT(*) FROM (
+    SELECT * FROM read_ion('test/ion/array_text.ion', format := 'array')
+    EXCEPT ALL
+    SELECT * FROM read_ion('test/ion/array_binary.ion', format := 'array')
+);
+----
+0
+
+query I
+SELECT COUNT(*) FROM (
+    SELECT * FROM read_ion('test/ion/array_binary.ion', format := 'array')
+    EXCEPT ALL
+    SELECT * FROM read_ion('test/ion/array_text.ion', format := 'array')
+);
+----
+0

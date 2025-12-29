@@ -1,0 +1,23 @@
+# name: test/sql/ion_read_binary_parity_sample.test
+# description: read_ion binary parity for sample
+# group: [sql]
+
+require ion
+
+query I
+SELECT COUNT(*) FROM (
+    SELECT * FROM read_ion('test/ion/sample.ion')
+    EXCEPT ALL
+    SELECT * FROM read_ion('test/ion/sample_binary.ion')
+);
+----
+0
+
+query I
+SELECT COUNT(*) FROM (
+    SELECT * FROM read_ion('test/ion/sample_binary.ion')
+    EXCEPT ALL
+    SELECT * FROM read_ion('test/ion/sample.ion')
+);
+----
+0

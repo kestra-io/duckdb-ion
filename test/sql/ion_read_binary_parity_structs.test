@@ -1,0 +1,23 @@
+# name: test/sql/ion_read_binary_parity_structs.test
+# description: read_ion binary parity for structs
+# group: [sql]
+
+require ion
+
+query I
+SELECT COUNT(*) FROM (
+    SELECT * FROM read_ion('test/ion/structs_text.ion')
+    EXCEPT ALL
+    SELECT * FROM read_ion('test/ion/structs_binary.ion')
+);
+----
+0
+
+query I
+SELECT COUNT(*) FROM (
+    SELECT * FROM read_ion('test/ion/structs_binary.ion')
+    EXCEPT ALL
+    SELECT * FROM read_ion('test/ion/structs_text.ion')
+);
+----
+0
