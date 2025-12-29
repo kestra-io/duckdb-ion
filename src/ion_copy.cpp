@@ -58,7 +58,15 @@ static BoundStatement CopyToIonPlan(Binder &binder, CopyStatement &stmt) {
 		}
 	}
 	if (binary) {
-		throw BinderException("COPY (FORMAT ION) binary output is temporarily disabled.");
+		copied_info.format = "ion_binary";
+		for (auto it = copied_info.options.begin(); it != copied_info.options.end();) {
+			if (StringUtil::Lower(it->first) == "binary") {
+				it = copied_info.options.erase(it);
+			} else {
+				++it;
+			}
+		}
+		return binder.Bind(*stmt_copy);
 	}
 
 	string date_format;
@@ -483,7 +491,6 @@ static void WriteIonValue(hWRITER writer, const Value &value, const LogicalType 
 
 static unique_ptr<FunctionData> IonBinaryCopyBind(ClientContext &context, CopyFunctionBindInput &input,
                                                   const vector<string> &names, const vector<LogicalType> &sql_types) {
-	throw BinderException("COPY (FORMAT ION) binary output is temporarily disabled.");
 	auto result = make_uniq<IonBinaryCopyBindData>();
 	result->names = names;
 	result->types = sql_types;
