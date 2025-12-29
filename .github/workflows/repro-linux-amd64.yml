@@ -105,10 +105,10 @@ jobs:
         run: |
           ls -1 test/sql/ion_read_binary*.test || true
 
-      - name: Debug binary read tests (gdb)
+      - name: Debug binary copy + read tests (gdb)
         if: failure()
         run: |
           docker run --env-file=docker_env.txt \
             -v "$GITHUB_WORKSPACE":/duckdb_build_dir \
             -v "$GITHUB_WORKSPACE/ccache_dir":/ccache_dir \
-            duckdb/linux_amd64 bash -lc "yum install -y gdb && bash scripts/run_unittest_debug.sh test/sql/ion_read_binary*.test"
+            duckdb/linux_amd64 bash -lc "yum install -y gdb && bash scripts/run_unittest_debug.sh test/sql/ion_copy_binary.test test/sql/ion_read_binary*.test"
