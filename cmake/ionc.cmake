@@ -1,0 +1,82 @@
+include(FetchContent)
+
+function(duckdb_ion_resolve_ionc out_ionc_target out_decnumber_target)
+	# Prefer an installed IonC package (vcpkg or system), fall back to FetchContent.
+	set(_ionc_target "")
+	set(_decnumber_target "")
+
+	if(DEFINED VCPKG_TARGET_TRIPLET)
+		set(_ionc_vcpkg_share_dir
+		    "${CMAKE_CURRENT_LIST_DIR}/../vcpkg_installed/${VCPKG_TARGET_TRIPLET}/share/ion-c")
+		if(EXISTS "${_ionc_vcpkg_share_dir}/IonCConfig.cmake")
+			find_package(IonC CONFIG REQUIRED PATHS "${_ionc_vcpkg_share_dir}" NO_DEFAULT_PATH)
+		else()
+			find_package(IonC CONFIG QUIET)
+		endif()
+	else()
+		find_package(IonC CONFIG QUIET)
+	endif()
+
+	if(IonC_FOUND)
+		if(TARGET IonC::ionc_static)
+			set(_ionc_target IonC::ionc_static)
+		elseif(TARGET IonC::ionc)
+			set(_ionc_target IonC::ionc)
+		endif()
+		if(TARGET IonC::decNumber_static)
+			set(_decnumber_target IonC::decNumber_static)
+		elseif(TARGET IonC::decNumber)
+			set(_decnumber_target IonC::decNumber)
+		endif()
+	endif()
+
+	if(NOT _ionc_target)
+		# FetchContent fallback for environments without vcpkg/system packages.
+		#
+		# Important: ion-c includes git submodules (bench deps like yyjson). We do not
+		# build those components for the extension, and CI networking/DNS can be flaky,
+		# so we disable submodule initialization entirely.
+		FetchContent_Declare(
+		    ionc
+		    GIT_REPOSITORY https://github.com/amzn/ion-c.git
+		    GIT_TAG v1.1.4
+		    GIT_SHALLOW TRUE
+		    GIT_SUBMODULES ""
+		    GIT_SUBMODULES_RECURSE FALSE)
+
+		FetchContent_GetProperties(ionc)
+		if(NOT ionc_POPULATED)
+			# Keep these settings scoped to ion-c by restoring them afterwards.
+			set(_saved_build_shared_libs "${BUILD_SHARED_LIBS}")
+			set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+			set(IONC_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+
+			FetchContent_Populate(ionc)
+			execute_process(
+			    COMMAND ${CMAKE_COMMAND} -DIONC_SOURCE_DIR=${ionc_SOURCE_DIR}
+			            -P ${CMAKE_CURRENT_LIST_DIR}/patch_ionc_tools.cmake)
+			add_subdirectory(${ionc_SOURCE_DIR} ${ionc_BINARY_DIR})
+
+			set(BUILD_SHARED_LIBS "${_saved_build_shared_libs}" CACHE BOOL "" FORCE)
+		endif()
+
+		if(TARGET ionc_static)
+			set(_ionc_target ionc_static)
+		elseif(TARGET ionc)
+			set(_ionc_target ionc)
+		endif()
+		if(TARGET decNumber_static)
+			set(_decnumber_target decNumber_static)
+		elseif(TARGET decNumber)
+			set(_decnumber_target decNumber)
+		endif()
+	endif()
+
+	if(NOT _ionc_target)
+		message(FATAL_ERROR "IonC target not found (expected IonC::ionc[_static] or ionc[_static])")
+	endif()
+
+	set(${out_ionc_target} "${_ionc_target}" PARENT_SCOPE)
+	set(${out_decnumber_target} "${_decnumber_target}" PARENT_SCOPE)
+endfunction()
+
