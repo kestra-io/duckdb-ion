@@ -29,6 +29,12 @@ struct IonReadScanState {
 	IonCExtractorHandle extractor;
 	vector<idx_t> extractor_cols;
 	vector<string> extractor_field_names;
+	struct ExtractorPathContext {
+		IonReadScanState *scan_state = nullptr;
+		idx_t col_idx = 0;
+	};
+	vector<ExtractorPathContext> extractor_path_contexts;
+	void *active_match_context = nullptr;
 	bool extractor_ready = false;
 #endif
 	idx_t file_index = 0;
@@ -117,9 +123,15 @@ static void EnsureIonExtractor(IonReadScanState &scan_state, const IonReadBindDa
 	scan_state.extractor_cols = projected_cols;
 	scan_state.extractor_field_names.clear();
 	scan_state.extractor_field_names.reserve(projected_cols.size());
-	for (auto &col_idx : scan_state.extractor_cols) {
+	scan_state.extractor_path_contexts.clear();
+	scan_state.extractor_path_contexts.resize(scan_state.extractor_cols.size());
+	for (idx_t i = 0; i < scan_state.extractor_cols.size(); i++) {
+		auto col_idx = scan_state.extractor_cols[i];
+		auto &path_ctx = scan_state.extractor_path_contexts[i];
+		path_ctx.scan_state = &scan_state;
+		path_ctx.col_idx = col_idx;
 		hPATH path = nullptr;
-		if (ion_extractor_path_create(scan_state.extractor.Get(), 1, IonExtractorCallback, &col_idx, &path) !=
+		if (ion_extractor_path_create(scan_state.extractor.Get(), 1, IonExtractorCallback, &path_ctx, &path) !=
 		    IERR_OK) {
 			scan_state.extractor.Reset();
 			if (profile) {
@@ -313,25 +325,19 @@ struct IonExtractorMatchContext {
 	bool profile = false;
 };
 
-static IonExtractorMatchContext *&ExtractorContext() {
-	static thread_local IonExtractorMatchContext *ctx = nullptr;
-	return ctx;
-}
-
 static iERR IonExtractorCallback(hREADER reader, hPATH matched_path, void *user_context,
                                  ION_EXTRACTOR_CONTROL *p_control) {
 	(void)matched_path;
-	auto &context_ptr = ExtractorContext();
-	if (!context_ptr || !context_ptr->scan_state || !context_ptr->bind_data || !context_ptr->output ||
-	    !context_ptr->column_to_output) {
+	auto *path_ctx = static_cast<IonReadScanState::ExtractorPathContext *>(user_context);
+	if (!path_ctx || !path_ctx->scan_state) {
 		return IERR_INVALID_ARG;
 	}
-	auto &ctx = *context_ptr;
-	auto col_idx_ptr = static_cast<idx_t *>(user_context);
-	if (!col_idx_ptr) {
+	auto *match_ctx = static_cast<IonExtractorMatchContext *>(path_ctx->scan_state->active_match_context);
+	if (!match_ctx || !match_ctx->bind_data || !match_ctx->output || !match_ctx->column_to_output) {
 		return IERR_INVALID_ARG;
 	}
-	auto col_idx = *col_idx_ptr;
+	auto &ctx = *match_ctx;
+	auto col_idx = path_ctx->col_idx;
 	auto out_idx = ctx.column_to_output->empty() ? col_idx : (*ctx.column_to_output)[col_idx];
 	if (out_idx == DConstants::INVALID_INDEX) {
 		return IERR_OK;
@@ -342,11 +348,11 @@ static iERR IonExtractorCallback(hREADER reader, hPATH matched_path, void *user_
 	}
 	auto &vec = ctx.output->data[out_idx];
 	auto target_type = ctx.bind_data->return_types[col_idx];
-	auto timing_context = ctx.profile ? &ctx.scan_state->timing : nullptr;
+	auto timing_context = ctx.profile ? &path_ctx->scan_state->timing : nullptr;
 	auto value_start = ctx.profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point {};
 	if (!ReadIonValueToVector(reader, type, vec, ctx.row, target_type, timing_context)) {
 		if (ctx.profile) {
-			ctx.scan_state->timing.vector_fallbacks++;
+			path_ctx->scan_state->timing.vector_fallbacks++;
 		}
 		auto value = IonReadValue(reader, type, timing_context);
 		if (!value.IsNull()) {
@@ -354,17 +360,17 @@ static iERR IonExtractorCallback(hREADER reader, hPATH matched_path, void *user_
 		}
 	}
 	if (ctx.profile) {
-		ctx.scan_state->timing.extractor_callbacks++;
+		path_ctx->scan_state->timing.extractor_callbacks++;
 	}
 	if (ctx.profile) {
 		auto elapsed = std::chrono::steady_clock::now() - value_start;
-		ctx.scan_state->timing.value_nanos +=
+		path_ctx->scan_state->timing.value_nanos +=
 		    static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count());
 	}
 	if (ctx.remaining > 0) {
-		auto marker = ctx.scan_state->row_counter;
-		if (ctx.scan_state->seen[col_idx] != marker) {
-			ctx.scan_state->seen[col_idx] = marker;
+		auto marker = path_ctx->scan_state->row_counter;
+		if (path_ctx->scan_state->seen[col_idx] != marker) {
+			path_ctx->scan_state->seen[col_idx] = marker;
 			ctx.remaining--;
 		}
 	}
@@ -639,9 +645,9 @@ static void IonReadFunction(ClientContext &context, TableFunctionInput &data_p, 
 				ctx.row = count;
 				ctx.remaining = required_columns;
 				ctx.profile = profile;
-				ExtractorContext() = &ctx;
+				scan_state->active_match_context = &ctx;
 				status = ion_extractor_match(scan_state->extractor.Get(), scan_state->reader.Get());
-				ExtractorContext() = nullptr;
+				scan_state->active_match_context = nullptr;
 				if (status != IERR_OK) {
 					if (profile) {
 						scan_state->timing.extractor_failures++;
