@@ -23,6 +23,8 @@ if(NOT IonC_FOUND)
     ionc
     GIT_REPOSITORY https://github.com/amzn/ion-c.git
     GIT_TAG v1.1.4
+    GIT_SHALLOW TRUE
+    GIT_SUBMODULES ""
   )
   FetchContent_GetProperties(ionc)
   if(NOT ionc_POPULATED)
