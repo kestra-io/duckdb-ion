@@ -26,6 +26,7 @@ include_directories(src/include)
 set(EXTENSION_SOURCES
   src/ion_extension.cpp
   src/ion/read_ion_register.cpp
+  src/ion/read_ion_infer.cpp
   src/ion/read_ion_value.cpp
   src/ion_copy.cpp
   src/ion_serialize.cpp)
