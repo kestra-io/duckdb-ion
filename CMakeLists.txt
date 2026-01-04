@@ -3,6 +3,13 @@ cmake_minimum_required(VERSION 3.11)
 # Set extension name here
 set(TARGET_NAME ion)
 
+if(CLANG_TIDY AND APPLE)
+  # clang-tidy struggles to discover system headers when the compiler is wrapped
+  # by ccache/sccache (shows up as "memory file not found" on macOS).
+  set(CMAKE_C_COMPILER_LAUNCHER "" CACHE STRING "" FORCE)
+  set(CMAKE_CXX_COMPILER_LAUNCHER "" CACHE STRING "" FORCE)
+endif()
+
 include(${CMAKE_CURRENT_LIST_DIR}/cmake/ionc.cmake)
 duckdb_ion_resolve_ionc(IONC_TARGET DECNUMBER_TARGET)
 set(IONC_LINK_TARGETS ${IONC_TARGET})
@@ -19,6 +26,7 @@ include_directories(src/include)
 set(EXTENSION_SOURCES
   src/ion_extension.cpp
   src/ion/read_ion_register.cpp
+  src/ion/read_ion_value.cpp
   src/ion_copy.cpp
   src/ion_serialize.cpp)
 
