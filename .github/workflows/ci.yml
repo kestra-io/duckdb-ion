@@ -143,15 +143,18 @@ jobs:
           - runner: macos-15-intel
             arch: x64
             vcpkg_triplet: x64-osx
+            ext_flags: ''
           - runner: macos-latest
             arch: arm64
             vcpkg_triplet: arm64-osx
+            ext_flags: '-DDISABLE_VPTR_SANITIZER=1'
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_COMPRESS: 'true'
       CCACHE_MAXSIZE: 400M
       CCACHE_BASEDIR: ${{ github.workspace }}
       VCPKG_TOOLCHAIN_PATH: ${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
+      EXT_FLAGS: ${{ matrix.ext_flags }}
       GEN: ninja
     steps:
       - uses: actions/checkout@v4

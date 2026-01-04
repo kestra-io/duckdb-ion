@@ -8,6 +8,7 @@ testext
 test/python/__pycache__/
 .Rhistory
 .venv/
+.ccache/
 vcpkg_installed/
 .perf/
 perf/*

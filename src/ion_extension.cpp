@@ -762,9 +762,11 @@ static void EnsureIonExtractor(IonReadScanState &scan_state, const IonReadBindDa
 			}
 			return;
 		}
+		auto field_name_copy = bind_data.names[col_idx];
 		ION_STRING field_name;
-		field_name.value = reinterpret_cast<BYTE *>(const_cast<char *>(bind_data.names[col_idx].data()));
-		field_name.length = bind_data.names[col_idx].size();
+		field_name.value =
+		    field_name_copy.empty() ? nullptr : reinterpret_cast<BYTE *>(static_cast<void *>(&field_name_copy[0]));
+		field_name.length = field_name_copy.size();
 		if (ion_extractor_path_append_field(path, &field_name) != IERR_OK) {
 			ion_extractor_close(scan_state.extractor);
 			scan_state.extractor = nullptr;

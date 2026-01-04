@@ -417,9 +417,10 @@ static void WriteIonValue(hWRITER writer, const Value &value, const LogicalType 
 	case LogicalTypeId::VARCHAR:
 	case LogicalTypeId::CHAR: {
 		auto text = StringValue::Get(value);
+		auto mutable_text = string(text);
 		ION_STRING ion_str;
-		ion_str.value = reinterpret_cast<BYTE *>(const_cast<char *>(text.data()));
-		ion_str.length = text.size();
+		ion_str.value = mutable_text.empty() ? nullptr : reinterpret_cast<BYTE *>(static_cast<void *>(&mutable_text[0]));
+		ion_str.length = mutable_text.size();
 		auto status = ion_writer_write_string(writer, &ion_str);
 		if (status != IERR_OK) {
 			ThrowIonWriterException(state, "write_ion failed to write string", status);
@@ -428,8 +429,11 @@ static void WriteIonValue(hWRITER writer, const Value &value, const LogicalType 
 	}
 	case LogicalTypeId::BLOB: {
 		auto blob = value.GetValueUnsafe<string_t>();
-		auto data = reinterpret_cast<BYTE *>(const_cast<char *>(blob.GetData()));
-		auto status = ion_writer_write_blob(writer, data, blob.GetSize());
+		std::vector<BYTE> buffer(blob.GetSize());
+		if (blob.GetSize() > 0) {
+			std::memcpy(buffer.data(), blob.GetData(), blob.GetSize());
+		}
+		auto status = ion_writer_write_blob(writer, buffer.data(), blob.GetSize());
 		if (status != IERR_OK) {
 			ThrowIonWriterException(state, "write_ion failed to write blob", status);
 		}
@@ -460,9 +464,11 @@ static void WriteIonValue(hWRITER writer, const Value &value, const LogicalType 
 		auto count = StructType::GetChildCount(type);
 		for (idx_t i = 0; i < count; i++) {
 			auto &name = StructType::GetChildName(type, i);
+			auto field_name_copy = string(name);
 			ION_STRING field_name;
-			field_name.value = reinterpret_cast<BYTE *>(const_cast<char *>(name.data()));
-			field_name.length = name.size();
+			field_name.value =
+			    field_name_copy.empty() ? nullptr : reinterpret_cast<BYTE *>(static_cast<void *>(&field_name_copy[0]));
+			field_name.length = field_name_copy.size();
 			status = ion_writer_write_field_name(writer, &field_name);
 			if (status != IERR_OK) {
 				ThrowIonWriterException(state, "write_ion failed to write field name", status);
@@ -477,9 +483,10 @@ static void WriteIonValue(hWRITER writer, const Value &value, const LogicalType 
 	}
 	default: {
 		auto text = value.ToString();
+		auto mutable_text = string(text);
 		ION_STRING ion_str;
-		ion_str.value = reinterpret_cast<BYTE *>(const_cast<char *>(text.data()));
-		ion_str.length = text.size();
+		ion_str.value = mutable_text.empty() ? nullptr : reinterpret_cast<BYTE *>(static_cast<void *>(&mutable_text[0]));
+		ion_str.length = mutable_text.size();
 		auto status = ion_writer_write_string(writer, &ion_str);
 		if (status != IERR_OK) {
 			ThrowIonWriterException(state, "write_ion failed to write fallback string", status);
@@ -572,9 +579,11 @@ static void IonBinaryCopySink(ExecutionContext &context, FunctionData &bind_data
 		}
 		for (idx_t col = 0; col < input.ColumnCount(); col++) {
 			auto &name = bdata.names[col];
+			auto field_name_copy = string(name);
 			ION_STRING field_name;
-			field_name.value = reinterpret_cast<BYTE *>(const_cast<char *>(name.data()));
-			field_name.length = name.size();
+			field_name.value =
+			    field_name_copy.empty() ? nullptr : reinterpret_cast<BYTE *>(static_cast<void *>(&field_name_copy[0]));
+			field_name.length = field_name_copy.size();
 			status = ion_writer_write_field_name(state.writer, &field_name);
 			if (status != IERR_OK) {
 				ThrowIonWriterException(state.stream_state, "write_ion failed to write field name", status);
