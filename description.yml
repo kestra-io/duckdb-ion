@@ -1,25 +1,17 @@
 extension:
   name: ion
   description: Read AWS Ion data and write Ion text or binary with typed mappings
-  version: 0.1.0
+  version: 0.2.0
   language: C++
   build: cmake
   license: MIT
   maintainers:
+    - kestra-io
     - proddata
 
-  # (Optional) param that specifies required extra toolchains
-  requires_toolchains: <"">
-  # (Optional) param that specifies a precise vcpkg commit to use
-  vcpkg_commit: <"">
-  # (Optional) this extension requires additional custom toolchain setup
-  custom_toolchain_script: <false>
-  # (Optional) ';' separated list of additional platforms
-  opt_in_platforms: <"">
-
 repo:
-  github: proddata/duckdb-ion
-  ref: v0.1.0
+  github: kestra-io/duckdb-ion
+  ref: v0.2.0
 
 docs:
   hello_world: |
