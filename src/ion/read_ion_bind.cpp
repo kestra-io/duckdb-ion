@@ -162,6 +162,24 @@ static void ParseConflictModeParameter(const Value &value, IonReadBindData::Conf
 	}
 }
 
+// Compatibility shim for DuckDB GlobFiles signature changes (pre/post v1.5).
+template <class FS>
+static auto GlobFilesCompatImpl(FS &fs, const string &path, ClientContext &context, const FileGlobInput &input, int)
+    -> decltype(fs.GlobFiles(path, context, input)) {
+	return fs.GlobFiles(path, context, input);
+}
+
+template <class FS>
+static auto GlobFilesCompatImpl(FS &fs, const string &path, ClientContext &, const FileGlobInput &input, long)
+    -> decltype(fs.GlobFiles(path, input)) {
+	return fs.GlobFiles(path, input);
+}
+
+static vector<OpenFileInfo> GlobFilesCompat(FileSystem &fs, const string &path, ClientContext &context,
+                                            const FileGlobInput &input) {
+	return GlobFilesCompatImpl(fs, path, context, input, 0);
+}
+
 static vector<string> ParseIonPaths(ClientContext &context, const Value &value) {
 	vector<string> raw_paths;
 	if (value.type().id() == LogicalTypeId::VARCHAR) {
@@ -180,7 +198,7 @@ static vector<string> ParseIonPaths(ClientContext &context, const Value &value) 
 	auto &fs = FileSystem::GetFileSystem(context);
 	vector<string> paths;
 	for (auto &path : raw_paths) {
-		auto matches = fs.GlobFiles(path, context, FileGlobOptions::DISALLOW_EMPTY);
+		auto matches = GlobFilesCompat(fs, path, context, FileGlobOptions::DISALLOW_EMPTY);
 		for (auto &match : matches) {
 			paths.push_back(match.path);
 		}
