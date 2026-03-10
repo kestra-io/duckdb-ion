@@ -73,7 +73,7 @@ jobs:
           OPENSSL_DIR=/duckdb_build_dir/build/release/vcpkg_installed/x64-linux-release
           OPENSSL_USE_STATIC_LIBS=true
           DUCKDB_PLATFORM=linux_amd64
-          DUCKDB_GIT_VERSION=v1.4.3
+          DUCKDB_GIT_VERSION=v1.5.0
           EXTENSION_NAME=ion
           EXTENSION_CANONICAL=
           LINUX_CI_IN_DOCKER=1
@@ -84,7 +84,7 @@ jobs:
 
       - name: Configure outside docker
         env:
-          DUCKDB_GIT_VERSION: v1.4.3
+          DUCKDB_GIT_VERSION: v1.5.0
           LINUX_CI_IN_DOCKER: 0
         run: |
           make configure_ci
