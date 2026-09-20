@@ -7,8 +7,10 @@
 #include "duckdb/common/types/decimal.hpp"
 #include "duckdb/common/types/timestamp.hpp"
 #include "duckdb/common/vector_operations/unary_executor.hpp"
+#include "duckdb/common/enums/on_create_conflict.hpp"
 #include "duckdb/function/scalar_function.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
+#include "duckdb/parser/parsed_data/create_scalar_function_info.hpp"
 
 namespace duckdb {
 
@@ -191,7 +193,17 @@ static void ToIonFunction(DataChunk &args, ExpressionState &state, Vector &resul
 void RegisterIonScalarFunctions(ExtensionLoader &loader) {
 	ScalarFunction to_ion("to_ion", {LogicalType::ANY}, LogicalType::VARCHAR, ToIonFunction);
 	to_ion.errors = FunctionErrors::CAN_THROW_RUNTIME_ERROR;
-	loader.RegisterFunction(to_ion);
+
+	CreateScalarFunctionInfo info(to_ion);
+	FunctionDescription description;
+	description.parameter_names = {"value"};
+	description.description =
+	    "Serialize a DuckDB value as Ion text and return it as VARCHAR; nested lists and structs are supported.";
+	description.examples = {"to_ion(struct_pack(a := 1, b := ['x', 'y']))"};
+	description.categories = {"serialization"};
+	info.descriptions.push_back(std::move(description));
+	info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+	loader.RegisterFunction(std::move(info));
 }
 
 } // namespace duckdb

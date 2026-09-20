@@ -1,0 +1,25 @@
+# name: test/sql/ion_function_descriptions.test
+# description: Ion functions expose searchable catalog descriptions
+# group: [sql]
+
+require ion
+
+query TTTT
+SELECT first(parameter_names[1]),
+       first(description),
+       first(examples[1]),
+       first(categories[1])
+FROM duckdb_functions()
+WHERE function_name = 'read_ion' AND function_type = 'table';
+----
+path	Read Ion text or binary files into DuckDB rows, inferring column types unless a schema is provided.	SELECT * FROM read_ion('test/ion/sample.ion')	data import
+
+query TTTT
+SELECT first(parameter_names[1]),
+       first(description),
+       first(examples[1]),
+       first(categories[1])
+FROM duckdb_functions()
+WHERE function_name = 'to_ion' AND function_type = 'scalar';
+----
+value	Serialize a DuckDB value as Ion text and return it as VARCHAR; nested lists and structs are supported.	to_ion(struct_pack(a := 1, b := ['x', 'y']))	serialization
