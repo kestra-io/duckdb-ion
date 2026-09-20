@@ -5,7 +5,7 @@
 require ion
 
 query TTTT
-SELECT first(parameter_names[1]),
+SELECT first(parameters[1]),
        first(description),
        first(examples[1]),
        first(categories[1])
@@ -15,7 +15,7 @@ WHERE function_name = 'read_ion' AND function_type = 'table';
 path	Read Ion text or binary files into DuckDB rows, inferring column types unless a schema is provided.	SELECT * FROM read_ion('test/ion/sample.ion')	data import
 
 query TTTT
-SELECT first(parameter_names[1]),
+SELECT first(parameters[1]),
        first(description),
        first(examples[1]),
        first(categories[1])
