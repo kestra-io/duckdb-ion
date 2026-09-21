@@ -1,5 +1,7 @@
 #include "ion/read_ion.hpp"
 #include "duckdb/common/multi_file/multi_file_reader.hpp"
+#include "duckdb/common/enums/on_create_conflict.hpp"
+#include "duckdb/parser/parsed_data/create_table_function_info.hpp"
 #include "ion/read_ion_bind.hpp"
 #include "ion/read_ion_scan.hpp"
 
@@ -24,7 +26,17 @@ void RegisterReadIon(ExtensionLoader &loader) {
 	read_ion.projection_pushdown = true;
 	read_ion.filter_pushdown = false;
 	read_ion.filter_prune = false;
-	loader.RegisterFunction(MultiFileReader::CreateFunctionSet(read_ion));
+
+	CreateTableFunctionInfo info(MultiFileReader::CreateFunctionSet(read_ion));
+	FunctionDescription description;
+	description.parameter_names = {"path"};
+	description.description =
+	    "Read Ion text or binary files into DuckDB rows, inferring column types unless a schema is provided.";
+	description.examples = {"SELECT * FROM read_ion('test/ion/sample.ion')"};
+	description.categories = {"data import"};
+	info.descriptions.push_back(std::move(description));
+	info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+	loader.RegisterFunction(std::move(info));
 }
 
 } // namespace ion
