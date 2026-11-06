@@ -11,6 +11,7 @@ namespace ion {
 void RegisterReadIon(ExtensionLoader &loader) {
 	TableFunction read_ion("read_ion", {LogicalType::VARCHAR}, ReadIonFunction, ReadIonBind, ReadIonInit,
 	                       ReadIonInitLocal);
+	read_ion.GetSignature().GetParameter(0).SetName(Identifier("path"));
 	read_ion.GetSignature().WithTypedKwargs("options", [](TypedKwargs &options) {
 		options.Add("columns", LogicalType::ANY)
 		    .Add("format", LogicalType::VARCHAR)
