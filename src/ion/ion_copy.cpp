@@ -47,7 +47,7 @@ static BoundStatement CopyToIonPlan(Binder &binder, CopyStatement &stmt) {
 	auto &copied_info = *copy.info;
 	bool binary = false;
 	for (auto &kv : copied_info.options) {
-		if (StringUtil::Lower(kv.first) == "binary") {
+		if (StringUtil::Lower(kv.first.GetIdentifierName()) == "binary") {
 			if (kv.second.size() > 1) {
 				ThrowIonCopyParameterException("binary");
 			}
@@ -61,7 +61,7 @@ static BoundStatement CopyToIonPlan(Binder &binder, CopyStatement &stmt) {
 	if (binary) {
 		copied_info.format = "ion_binary";
 		for (auto it = copied_info.options.begin(); it != copied_info.options.end();) {
-			if (StringUtil::Lower(it->first) == "binary") {
+			if (StringUtil::Lower(it->first.GetIdentifierName()) == "binary") {
 				it = copied_info.options.erase(it);
 			} else {
 				++it;
@@ -72,9 +72,9 @@ static BoundStatement CopyToIonPlan(Binder &binder, CopyStatement &stmt) {
 
 	string date_format;
 	string timestamp_format;
-	case_insensitive_map_t<vector<Value>> csv_copy_options {{"file_extension", {"ion"}}};
+	identifier_map_t<vector<Value>> csv_copy_options {{"file_extension", {"ion"}}};
 	for (const auto &kv : copied_info.options) {
-		const auto &loption = StringUtil::Lower(kv.first);
+		const auto &loption = StringUtil::Lower(kv.first.GetIdentifierName());
 		if (loption == "dateformat" || loption == "date_format") {
 			if (kv.second.size() != 1) {
 				ThrowIonCopyParameterException(loption);
@@ -99,7 +99,7 @@ static BoundStatement CopyToIonPlan(Binder &binder, CopyStatement &stmt) {
 		} else if (loption == "binary") {
 			// binary handled above
 		} else {
-			throw BinderException("Unknown option for COPY ... TO ... (FORMAT ION): \"%s\".", loption);
+			throw BinderException("Unknown option for COPY ... TO ... (FORMAT ION): \"%s\".", kv.first.GetIdentifierName());
 		}
 	}
 
@@ -466,7 +466,7 @@ static void WriteIonValue(hWRITER writer, const Value &value, const LogicalType 
 		auto count = StructType::GetChildCount(type);
 		for (idx_t i = 0; i < count; i++) {
 			auto &name = StructType::GetChildName(type, i);
-			auto field_name_copy = string(name);
+			auto field_name_copy = name.GetIdentifierName();
 			ION_STRING field_name;
 			field_name.value = field_name_copy.empty() ? nullptr : reinterpret_cast<BYTE *>(&field_name_copy[0]);
 			field_name.length = NumericCast<int32_t>(field_name_copy.size());
@@ -507,7 +507,7 @@ static unique_ptr<FunctionData> IonBinaryCopyBind(ClientContext &context, CopyFu
 	}
 	result->types = sql_types;
 	for (auto &kv : input.info.options) {
-		auto loption = StringUtil::Lower(kv.first);
+		auto loption = StringUtil::Lower(kv.first.GetIdentifierName());
 		if (loption == "array") {
 			if (kv.second.size() > 1) {
 				ThrowIonCopyParameterException(loption);
@@ -520,14 +520,14 @@ static unique_ptr<FunctionData> IonBinaryCopyBind(ClientContext &context, CopyFu
 				ThrowIonCopyParameterException(loption);
 			}
 			auto compression_str = StringValue::Get(kv.second.back());
-			result->compression_type = FileCompressionTypeFromString(compression_str);
+			result->compression_type = FileCompressionType(compression_str);
 		} else if (loption == "dateformat" || loption == "date_format" || loption == "timestampformat" ||
 		           loption == "timestamp_format") {
 			throw BinderException("COPY (FORMAT ION) binary output does not support \"%s\".", loption);
 		} else if (loption == "binary") {
 			// binary handled in the plan rewrite
 		} else {
-			throw BinderException("Unknown option for COPY ... TO ... (FORMAT ION): \"%s\".", loption);
+			throw BinderException("Unknown option for COPY ... TO ... (FORMAT ION): \"%s\".", kv.first.GetIdentifierName());
 		}
 	}
 	return std::move(result);

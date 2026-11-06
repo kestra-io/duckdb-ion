@@ -30,7 +30,7 @@ static LogicalType PromoteIonTypeLocal(const LogicalType &existing, const Logica
 	}
 	if (existing.id() == LogicalTypeId::STRUCT && incoming.id() == LogicalTypeId::STRUCT) {
 		child_list_t<LogicalType> merged;
-		unordered_map<string, idx_t> index_by_name;
+		identifier_map_t<idx_t> index_by_name;
 		auto &existing_children = StructType::GetChildTypes(existing);
 		for (auto &child : existing_children) {
 			index_by_name.emplace(child.first, merged.size());
@@ -456,9 +456,9 @@ IonVectorReadStatus ReadIonValueToVectorImpl(ION_READER *reader, ION_TYPE field_
 	if (target_type.IsJSONType()) {
 		string json_value;
 		AppendIonValueAsJson(reader, field_type, json_value);
-		auto data = FlatVector::GetData<string_t>(vector);
+		auto data = FlatVector::GetDataMutable<string_t>(vector);
 		data[row] = StringVector::AddString(vector, json_value);
-		FlatVector::Validity(vector).SetValid(row);
+		FlatVector::ValidityMutable(vector).SetValid(row);
 		return IonVectorReadStatus::VALUE_WRITTEN;
 	}
 	switch (target_type.id()) {
@@ -470,9 +470,9 @@ IonVectorReadStatus ReadIonValueToVectorImpl(ION_READER *reader, ION_TYPE field_
 		if (ion_reader_read_bool(reader, &value) != IERR_OK) {
 			throw IOException("read_ion failed to read bool");
 		}
-		auto data = FlatVector::GetData<bool>(vector);
+		auto data = FlatVector::GetDataMutable<bool>(vector);
 		data[row] = value != FALSE;
-		FlatVector::Validity(vector).SetValid(row);
+		FlatVector::ValidityMutable(vector).SetValid(row);
 		return IonVectorReadStatus::VALUE_WRITTEN;
 	}
 	case LogicalTypeId::BIGINT: {
@@ -489,9 +489,9 @@ IonVectorReadStatus ReadIonValueToVectorImpl(ION_READER *reader, ION_TYPE field_
 		} else if (ion_reader_read_int64(reader, &value) != IERR_OK) {
 			throw IOException("read_ion failed to read int");
 		}
-		auto data = FlatVector::GetData<int64_t>(vector);
+		auto data = FlatVector::GetDataMutable<int64_t>(vector);
 		data[row] = value;
-		FlatVector::Validity(vector).SetValid(row);
+		FlatVector::ValidityMutable(vector).SetValid(row);
 		return IonVectorReadStatus::VALUE_WRITTEN;
 	}
 	case LogicalTypeId::DOUBLE: {
@@ -533,9 +533,9 @@ IonVectorReadStatus ReadIonValueToVectorImpl(ION_READER *reader, ION_TYPE field_
 		} else {
 			return IonVectorReadStatus::UNHANDLED;
 		}
-		auto data = FlatVector::GetData<double>(vector);
+		auto data = FlatVector::GetDataMutable<double>(vector);
 		data[row] = value;
-		FlatVector::Validity(vector).SetValid(row);
+		FlatVector::ValidityMutable(vector).SetValid(row);
 		return IonVectorReadStatus::VALUE_WRITTEN;
 	}
 	case LogicalTypeId::DECIMAL: {
@@ -572,13 +572,13 @@ IonVectorReadStatus ReadIonValueToVectorImpl(ION_READER *reader, ION_TYPE field_
 			if (!Hugeint::TryCast(decimal_value, value_i64)) {
 				return IonVectorReadStatus::UNHANDLED;
 			}
-			auto data = FlatVector::GetData<int64_t>(vector);
+			auto data = FlatVector::GetDataMutable<int64_t>(vector);
 			data[row] = value_i64;
 		} else {
-			auto data = FlatVector::GetData<hugeint_t>(vector);
+			auto data = FlatVector::GetDataMutable<hugeint_t>(vector);
 			data[row] = decimal_value;
 		}
-		FlatVector::Validity(vector).SetValid(row);
+		FlatVector::ValidityMutable(vector).SetValid(row);
 		return IonVectorReadStatus::VALUE_WRITTEN;
 	}
 	case LogicalTypeId::TIMESTAMP:
@@ -607,13 +607,13 @@ IonVectorReadStatus ReadIonValueToVectorImpl(ION_READER *reader, ION_TYPE field_
 			ts = Timestamp::FromString(ts_str, true);
 		}
 		if (target_type.id() == LogicalTypeId::TIMESTAMP_TZ) {
-			auto data = FlatVector::GetData<timestamp_tz_t>(vector);
+			auto data = FlatVector::GetDataMutable<timestamp_tz_t>(vector);
 			data[row] = timestamp_tz_t(ts);
 		} else {
-			auto data = FlatVector::GetData<timestamp_t>(vector);
+			auto data = FlatVector::GetDataMutable<timestamp_t>(vector);
 			data[row] = ts;
 		}
-		FlatVector::Validity(vector).SetValid(row);
+		FlatVector::ValidityMutable(vector).SetValid(row);
 		return IonVectorReadStatus::VALUE_WRITTEN;
 	}
 	case LogicalTypeId::VARCHAR: {
@@ -627,7 +627,7 @@ IonVectorReadStatus ReadIonValueToVectorImpl(ION_READER *reader, ION_TYPE field_
 		if (ion_reader_read_string(reader, &value) != IERR_OK) {
 			throw IOException("read_ion failed to read string");
 		}
-		auto data = FlatVector::GetData<string_t>(vector);
+		auto data = FlatVector::GetDataMutable<string_t>(vector);
 		auto ptr = reinterpret_cast<const char *>(value.value);
 		auto len = static_cast<idx_t>(value.length);
 		if (!ptr) {
@@ -635,7 +635,7 @@ IonVectorReadStatus ReadIonValueToVectorImpl(ION_READER *reader, ION_TYPE field_
 			len = 0;
 		}
 		data[row] = StringVector::AddString(vector, ptr, len);
-		FlatVector::Validity(vector).SetValid(row);
+		FlatVector::ValidityMutable(vector).SetValid(row);
 		return IonVectorReadStatus::VALUE_WRITTEN;
 	}
 	case LogicalTypeId::BLOB: {
@@ -651,10 +651,10 @@ IonVectorReadStatus ReadIonValueToVectorImpl(ION_READER *reader, ION_TYPE field_
 		if (ion_reader_read_lob_bytes(reader, buffer.data(), length, &read_bytes) != IERR_OK) {
 			throw IOException("read_ion failed to read blob");
 		}
-		auto data = FlatVector::GetData<string_t>(vector);
+		auto data = FlatVector::GetDataMutable<string_t>(vector);
 		data[row] = StringVector::AddStringOrBlob(vector, reinterpret_cast<const char *>(buffer.data()),
 		                                          static_cast<idx_t>(read_bytes));
-		FlatVector::Validity(vector).SetValid(row);
+		FlatVector::ValidityMutable(vector).SetValid(row);
 		return IonVectorReadStatus::VALUE_WRITTEN;
 	}
 	default:

@@ -162,7 +162,7 @@ static void SerializeIonValue(const Value &value, string &out) {
 				out += ", ";
 			}
 			auto &name = StructType::GetChildName(type, i);
-			AppendSymbol(name, out);
+			AppendSymbol(name.GetIdentifierName(), out);
 			out += ": ";
 			SerializeIonValue(children[i], out);
 		}
@@ -192,7 +192,7 @@ static void ToIonFunction(DataChunk &args, ExpressionState &state, Vector &resul
 
 void RegisterIonScalarFunctions(ExtensionLoader &loader) {
 	ScalarFunction to_ion("to_ion", {LogicalType::ANY}, LogicalType::VARCHAR, ToIonFunction);
-	to_ion.errors = FunctionErrors::CAN_THROW_RUNTIME_ERROR;
+	to_ion.SetErrorMode(FunctionErrors::CAN_THROW_RUNTIME_ERROR);
 
 	CreateScalarFunctionInfo info(to_ion);
 	FunctionDescription description;
