@@ -9,6 +9,7 @@
 #include "duckdb/common/types/interval.hpp"
 #include "duckdb/common/types/time.hpp"
 #include "duckdb/common/types/timestamp.hpp"
+#include "duckdb/common/vector/flat_vector.hpp"
 #include "duckdb/function/cast/default_casts.hpp"
 
 #include <cmath>

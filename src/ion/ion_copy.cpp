@@ -498,9 +498,13 @@ static void WriteIonValue(hWRITER writer, const Value &value, const LogicalType 
 }
 
 static unique_ptr<FunctionData> IonBinaryCopyBind(ClientContext &context, CopyFunctionBindInput &input,
-                                                  const vector<string> &names, const vector<LogicalType> &sql_types) {
+                                                  const vector<Identifier> &names,
+                                                  const vector<LogicalType> &sql_types) {
 	auto result = make_uniq<IonBinaryCopyBindData>();
-	result->names = names;
+	result->names.reserve(names.size());
+	for (const auto &n : names) {
+		result->names.push_back(n.GetIdentifierName());
+	}
 	result->types = sql_types;
 	for (auto &kv : input.info.options) {
 		auto loption = StringUtil::Lower(kv.first);

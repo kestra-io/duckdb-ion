@@ -209,7 +209,7 @@ static vector<string> ParseIonPaths(ClientContext &context, const Value &value) 
 }
 
 unique_ptr<FunctionData> ReadIonBind(ClientContext &context, TableFunctionBindInput &input,
-                                     vector<LogicalType> &return_types, vector<string> &names) {
+                                     vector<LogicalType> &return_types, vector<Identifier> &names) {
 	if (input.inputs.size() != 1 || input.inputs[0].IsNull()) {
 		throw InvalidInputException("read_ion expects a single, non-null file path or list of paths");
 	}
@@ -279,7 +279,11 @@ unique_ptr<FunctionData> ReadIonBind(ClientContext &context, TableFunctionBindIn
 		bind_data->name_map.emplace(bind_data->names[i], i);
 	}
 	return_types = bind_data->return_types;
-	names = bind_data->names;
+	names.clear();
+	names.reserve(bind_data->names.size());
+	for (const auto &n : bind_data->names) {
+		names.emplace_back(n);
+	}
 	return std::move(bind_data);
 }
 
