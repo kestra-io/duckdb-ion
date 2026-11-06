@@ -482,9 +482,9 @@ static LogicalType InferIonValueType(ION_READER *reader, ION_TYPE type) {
 			}
 			auto name = string(reinterpret_cast<const char *>(field_name.value), field_name.length);
 			auto inferred = InferIonValueType(reader, field_type);
-			auto it = index_by_name.find(name);
+			auto it = index_by_name.find(Identifier(name));
 			if (it == index_by_name.end()) {
-				index_by_name.emplace(name, children.size());
+				index_by_name.emplace(Identifier(name), children.size());
 				children.emplace_back(name, NormalizeInferredIonType(inferred));
 			} else {
 				children[it->second].second =

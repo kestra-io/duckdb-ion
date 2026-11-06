@@ -125,11 +125,11 @@ static BoundStatement CopyToIonPlan(Binder &binder, CopyStatement &stmt) {
 		const auto &name = bound_original.names[col_idx];
 		if (!date_format.empty() && type == LogicalTypeId::DATE) {
 			strftime_children.emplace_back(std::move(column));
-			strftime_children.emplace_back(make_uniq<ConstantExpression>(date_format));
+			strftime_children.emplace_back(ConstantExpression::String(date_format));
 			column = make_uniq<FunctionExpression>("strftime", std::move(strftime_children));
 		} else if (!timestamp_format.empty() && type == LogicalTypeId::TIMESTAMP) {
 			strftime_children.emplace_back(std::move(column));
-			strftime_children.emplace_back(make_uniq<ConstantExpression>(timestamp_format));
+			strftime_children.emplace_back(ConstantExpression::String(timestamp_format));
 			column = make_uniq<FunctionExpression>("strftime", std::move(strftime_children));
 		}
 		column->SetAlias(name);
