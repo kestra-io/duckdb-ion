@@ -193,6 +193,7 @@ static void ToIonFunction(DataChunk &args, ExpressionState &state, Vector &resul
 void RegisterIonScalarFunctions(ExtensionLoader &loader) {
 	ScalarFunction to_ion("to_ion", {LogicalType::ANY}, LogicalType::VARCHAR, ToIonFunction);
 	to_ion.SetErrorMode(FunctionErrors::CAN_THROW_RUNTIME_ERROR);
+	to_ion.GetSignature().GetParameter(0).SetName(Identifier("value"));
 
 	CreateScalarFunctionInfo info(to_ion);
 	FunctionDescription description;
