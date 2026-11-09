@@ -99,7 +99,8 @@ static BoundStatement CopyToIonPlan(Binder &binder, CopyStatement &stmt) {
 		} else if (loption == "binary") {
 			// binary handled above
 		} else {
-			throw BinderException("Unknown option for COPY ... TO ... (FORMAT ION): \"%s\".", kv.first.GetIdentifierName());
+			throw BinderException("Unknown option for COPY ... TO ... (FORMAT ION): \"%s\".",
+			                      kv.first.GetIdentifierName());
 		}
 	}
 
@@ -527,7 +528,8 @@ static unique_ptr<FunctionData> IonBinaryCopyBind(ClientContext &context, CopyFu
 		} else if (loption == "binary") {
 			// binary handled in the plan rewrite
 		} else {
-			throw BinderException("Unknown option for COPY ... TO ... (FORMAT ION): \"%s\".", kv.first.GetIdentifierName());
+			throw BinderException("Unknown option for COPY ... TO ... (FORMAT ION): \"%s\".",
+			                      kv.first.GetIdentifierName());
 		}
 	}
 	return std::move(result);
