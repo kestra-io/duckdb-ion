@@ -90,7 +90,7 @@ static void AppendTimestampString(const Value &value, string &out) {
 	if (text.find('T') != string::npos) {
 		auto tz_pos = text.find_last_of("+-Z");
 		if (tz_pos == string::npos || tz_pos < text.find('T')) {
-			text += "Z";
+			text += 'Z';
 		}
 	}
 	out += text;

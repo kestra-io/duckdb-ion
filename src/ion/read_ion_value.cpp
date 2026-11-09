@@ -207,8 +207,9 @@ static void AppendJsonEscapedString(const char *data, idx_t length, string &out)
 			if (c < 0x20) {
 				static constexpr char hex[] = "0123456789abcdef";
 				out += "\\u00";
-				out.push_back(hex[c >> 4]);
-				out.push_back(hex[c & 0x0F]);
+				auto uc = static_cast<unsigned char>(c);
+				out.push_back(hex[(static_cast<unsigned int>(uc) >> 4u) & 0x0Fu]);
+				out.push_back(hex[static_cast<unsigned int>(uc) & 0x0Fu]);
 			} else {
 				out.push_back(static_cast<char>(c));
 			}

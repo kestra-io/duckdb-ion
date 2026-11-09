@@ -278,7 +278,7 @@ static void AppendTimestampString(const Value &value, string &out) {
 	if (text.find('T') != string::npos) {
 		auto tz_pos = text.find_last_of("+-Z");
 		if (tz_pos == string::npos || tz_pos < text.find('T')) {
-			text += "Z";
+			text += 'Z';
 		}
 	}
 	out += text;
@@ -396,7 +396,7 @@ static void WriteIonValue(hWRITER writer, const Value &value, const LogicalType 
 		if (pos != string::npos) {
 			timestamp_text[pos] = 'T';
 		}
-		timestamp_text += "Z";
+		timestamp_text += 'Z';
 		auto mutable_text = timestamp_text;
 		ION_TIMESTAMP timestamp;
 		std::memset(&timestamp, 0, sizeof(timestamp));
