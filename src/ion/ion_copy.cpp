@@ -351,7 +351,7 @@ static void WriteIonValue(hWRITER writer, const Value &value, const LogicalType 
 	case LogicalTypeId::DECIMAL: {
 		auto text = value.ToString();
 		ION_DECIMAL decimal;
-		ion_decimal_zero(&decimal);
+		std::memset(&decimal, 0, sizeof(decimal));
 		decContext context;
 		decContextDefault(&context, DEC_INIT_DECQUAD);
 		auto width = DecimalType::GetWidth(type);
