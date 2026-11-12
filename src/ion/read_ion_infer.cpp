@@ -61,7 +61,7 @@ static LogicalType PromoteIonType(const LogicalType &existing, const LogicalType
 	}
 	if (existing.id() == LogicalTypeId::STRUCT && incoming.id() == LogicalTypeId::STRUCT) {
 		child_list_t<LogicalType> merged;
-		unordered_map<string, idx_t> index_by_name;
+		identifier_map_t<idx_t> index_by_name;
 		auto &existing_children = StructType::GetChildTypes(existing);
 		for (auto &child : existing_children) {
 			index_by_name.emplace(child.first, merged.size());
@@ -287,7 +287,7 @@ static double CalculateTypeSimilarity(const LogicalType &merged, const LogicalTy
 		const auto &merged_child_types = StructType::GetChildTypes(merged);
 		const auto &type_child_types = StructType::GetChildTypes(type);
 
-		unordered_map<string, const LogicalType &> merged_child_types_map;
+		identifier_map_t<const LogicalType &> merged_child_types_map;
 		for (const auto &merged_child : merged_child_types) {
 			merged_child_types_map.emplace(merged_child.first, merged_child.second);
 		}
@@ -464,7 +464,7 @@ static LogicalType InferIonValueType(ION_READER *reader, ION_TYPE type) {
 			throw IOException("read_ion failed to step into struct during schema inference");
 		}
 		child_list_t<LogicalType> children;
-		unordered_map<string, idx_t> index_by_name;
+		identifier_map_t<idx_t> index_by_name;
 		while (true) {
 			ION_TYPE field_type = tid_NULL;
 			auto field_status = ion_reader_next(reader, &field_type);
@@ -482,9 +482,9 @@ static LogicalType InferIonValueType(ION_READER *reader, ION_TYPE type) {
 			}
 			auto name = string(reinterpret_cast<const char *>(field_name.value), field_name.length);
 			auto inferred = InferIonValueType(reader, field_type);
-			auto it = index_by_name.find(name);
+			auto it = index_by_name.find(Identifier(name));
 			if (it == index_by_name.end()) {
-				index_by_name.emplace(name, children.size());
+				index_by_name.emplace(Identifier(name), children.size());
 				children.emplace_back(name, NormalizeInferredIonType(inferred));
 			} else {
 				children[it->second].second =

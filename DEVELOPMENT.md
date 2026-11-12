@@ -52,6 +52,13 @@ DuckDB extensions use two submodules that are included in your forked extension 
 > [!IMPORTANT]
 > It is recommended that you update your submodules at least once every other major LTS release to avoid CI/CD pipeline build errors caused by remaining pinned to a stale commit of these submodules.
 
+### Version Bump Checklist
+When bumping the DuckDB version (e.g. to a new major release or LTS), update the version in the following 4 locations:
+1. `.gitmodules`: update `branch` for both `duckdb` and `extension-ci-tools`.
+2. `.github/workflows/MainDistributionPipeline.yml`: update `duckdb_version` and the `@` branch tag for `extension-ci-tools` workflows.
+3. `.github/workflows/repro-linux-amd64.yml`: update `DUCKDB_GIT_VERSION`.
+4. `Makefile`: update `OVERRIDE_GIT_DESCRIBE`.
+
 To update all submodules to the latest commit hash:
 ```bash
 git submodule update --init --recursive

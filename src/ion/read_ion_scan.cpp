@@ -356,7 +356,7 @@ static iERR IonExtractorCallback(hREADER reader, hPATH matched_path, void *user_
 		}
 		auto value = IonReadValue(reader, type, timing_context);
 		if (!value.IsNull()) {
-			ctx.output->SetValue(out_idx, ctx.row, value.DefaultCastAs(target_type));
+			vec.SetValue(ctx.row, value.DefaultCastAs(target_type));
 		}
 	}
 	if (ctx.profile) {
@@ -462,7 +462,7 @@ static void IonReadFunction(ClientContext &context, TableFunctionInput &data_p, 
 				scan_state->timing.reported = true;
 				ReportProfile(global_state, *scan_state);
 			}
-			output.SetCardinality(0);
+			output.SetChildCardinality(0);
 			return;
 		}
 	}
@@ -601,9 +601,9 @@ static void IonReadFunction(ClientContext &context, TableFunctionInput &data_p, 
 		for (idx_t out_idx = 0; out_idx < output.ColumnCount(); out_idx++) {
 			auto col_id = column_ids.empty() ? out_idx : column_ids[out_idx];
 			if (col_id == DConstants::INVALID_INDEX) {
-				output.SetValue(out_idx, count, Value());
+				output.data[out_idx].SetValue(count, Value());
 			} else {
-				output.SetValue(out_idx, count, Value(bind_data.return_types[col_id]));
+				output.data[out_idx].SetValue(count, Value(bind_data.return_types[col_id]));
 			}
 		}
 		BOOL is_null = FALSE;
@@ -753,7 +753,7 @@ static void IonReadFunction(ClientContext &context, TableFunctionInput &data_p, 
 						}
 						auto value = IonReadValue(scan_state->reader.Get(), field_type, timing_context);
 						if (!value.IsNull()) {
-							output.SetValue(out_idx, count, value.DefaultCastAs(target_type));
+							vec.SetValue(count, value.DefaultCastAs(target_type));
 						}
 					}
 					if (profile) {
@@ -796,7 +796,7 @@ static void IonReadFunction(ClientContext &context, TableFunctionInput &data_p, 
 			if (!value.IsNull()) {
 				auto out_idx = column_to_output.empty() ? 0 : column_to_output[0];
 				if (out_idx != DConstants::INVALID_INDEX) {
-					output.SetValue(out_idx, count, value.DefaultCastAs(bind_data.return_types[0]));
+					output.data[out_idx].SetValue(count, value.DefaultCastAs(bind_data.return_types[0]));
 				}
 			}
 			if (profile) {
@@ -810,7 +810,7 @@ static void IonReadFunction(ClientContext &context, TableFunctionInput &data_p, 
 		}
 		count++;
 	}
-	output.SetCardinality(count);
+	output.SetChildCardinality(count);
 	if (profile && scan_state->finished && !scan_state->timing.reported && !local_state) {
 		scan_state->timing.reported = true;
 		ReportProfile(global_state, *scan_state);

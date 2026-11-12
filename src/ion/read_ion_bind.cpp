@@ -31,7 +31,7 @@ static void ParseColumnsParameter(ClientContext &context, const Value &value, ve
 		if (val.type().id() != LogicalTypeId::VARCHAR) {
 			throw BinderException("read_ion \"columns\" parameter type specification must be VARCHAR.");
 		}
-		names.push_back(name);
+		names.push_back(name.GetIdentifierName());
 		types.emplace_back(TransformStringToLogicalType(StringValue::Get(val), context));
 	}
 	if (names.empty()) {
@@ -209,7 +209,7 @@ static vector<string> ParseIonPaths(ClientContext &context, const Value &value) 
 }
 
 unique_ptr<FunctionData> ReadIonBind(ClientContext &context, TableFunctionBindInput &input,
-                                     vector<LogicalType> &return_types, vector<string> &names) {
+                                     vector<LogicalType> &return_types, vector<Identifier> &names) {
 	if (input.inputs.size() != 1 || input.inputs[0].IsNull()) {
 		throw InvalidInputException("read_ion expects a single, non-null file path or list of paths");
 	}
@@ -222,7 +222,7 @@ unique_ptr<FunctionData> ReadIonBind(ClientContext &context, TableFunctionBindIn
 		if (kv.second.IsNull()) {
 			throw BinderException("read_ion does not allow NULL named parameters");
 		}
-		auto option = StringUtil::Lower(kv.first);
+		auto option = StringUtil::Lower(kv.first.GetIdentifierName());
 		if (option == "columns") {
 			ParseColumnsParameter(context, kv.second, bind_data->names, bind_data->return_types);
 		} else if (option == "format") {
@@ -248,16 +248,14 @@ unique_ptr<FunctionData> ReadIonBind(ClientContext &context, TableFunctionBindIn
 		} else if (option == "conflict_mode") {
 			ParseConflictModeParameter(kv.second, bind_data->conflict_mode);
 		} else {
-			throw BinderException("read_ion does not support named parameter \"%s\"", kv.first);
+			throw BinderException("read_ion does not support named parameter \"%s\"", kv.first.GetIdentifierName());
 		}
 	}
 	if (bind_data->conflict_mode == IonReadBindData::ConflictMode::JSON) {
-		if (!ExtensionHelper::TryAutoLoadExtension(context, "json")) {
-			try {
-				ExtensionHelper::LoadExternalExtension(context, "json");
-			} catch (const Exception &) {
-				throw BinderException("read_ion conflict_mode 'json' requires the json extension");
-			}
+		try {
+			ExtensionHelper::AutoLoadExtension(context, "json");
+		} catch (const Exception &) {
+			throw BinderException("read_ion conflict_mode 'json' requires the json extension");
 		}
 	}
 	if (bind_data->records_mode == IonReadBindData::RecordsMode::DISABLED && !bind_data->names.empty()) {
@@ -279,7 +277,11 @@ unique_ptr<FunctionData> ReadIonBind(ClientContext &context, TableFunctionBindIn
 		bind_data->name_map.emplace(bind_data->names[i], i);
 	}
 	return_types = bind_data->return_types;
-	names = bind_data->names;
+	names.clear();
+	names.reserve(bind_data->names.size());
+	for (const auto &n : bind_data->names) {
+		names.emplace_back(n);
+	}
 	return std::move(bind_data);
 }
 
